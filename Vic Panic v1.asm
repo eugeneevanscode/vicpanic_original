@@ -1,4 +1,19 @@
 //
+// Vic Panic - Original copyright (c) 1982 Bug Byte Software - Written by Eugene Evans
+
+// It's hard to say where the ownership of this game currently sits. I was an employee of Bug Byte. The company no longer exists.
+// I'm unaware of any of the assets being acquired. In addition this game was a copy of a popular arcade game "Space Panic".
+// As a result I'm comfortable posting this source code which I created by disassembling the object code from a tap file which someone else
+// had captured and made available online
+
+// Versions
+
+// 2023-03-11 Posted first build
+//      Full disassembly is not complete. Some tables and data is still hard coded which means if you change the code you make break the game.
+//      My goal is to complete the disassembly so that the game is ready to be changed. I hope to them go on to make some serious improvements
+//      while staying turn to being a game for the unexpanded original 4K Vic 20
+
+//
 //  Define VIC 20 Hardware System Addresses
 //
         .var VIC_HORZ_POS_INTERLACE = $9000
