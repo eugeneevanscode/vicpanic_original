@@ -1,5 +1,5 @@
 //
-// Vic Panic - Original copyright (c) 1982 Bug Byte Software - Written by Eugene Evans
+// Vic Panic - Original copyright (c) 1982 Bug Byte Software - Written by Eugene Evans - Disassembled from .tap file of original 2023
 
 // It's hard to say where the ownership of this game currently sits. I was an employee of Bug Byte. The company no longer exists.
 // I'm unaware of any of the assets being acquired. In addition this game was a copy of a popular arcade game "Space Panic".
@@ -10,8 +10,13 @@
 
 // 2023-03-11 Posted first build
 //      Full disassembly is not complete. Some tables and data is still hard coded which means if you change the code you make break the game.
-//      My goal is to complete the disassembly so that the game is ready to be changed. I hope to them go on to make some serious improvements
-//      while staying turn to being a game for the unexpanded original 4K Vic 20
+//      My goal is to complete the disassembly so that the game is ready to be changed. I hope to then make some improvements
+//      while staying true to being a game for the unexpanded original 4K Vic 20
+
+// 2023-03-28 Completed disassembly
+//      Full disassembly complete. All subroutines and jumps labeled so that the code can be modified and it will assemble and run. Removed some data that was superfluous
+//      from the original disassembly. All data is labeled and turned into a more readable form. Still work to do to make some labels make more sense and still don't have
+//      100% of idea of how all code works. Found at least one bug and odd code (amazing it ever made sense). Plan to start making improvements.
 
 //
 //  Define VIC 20 Hardware System Addresses
@@ -63,18 +68,18 @@
 // VIA 1
         .var VIC_VIA_1_Port_A = $9111   
 //                   Port A Output Register
-//                   Bit 2=Joy 0        0b00000100 / 0x04 / Up
-//                   Bit 3=Joy 1        0b00001000 / 0x08 / Down
-//                   Bit 4=Joy 2        0b00010000 / 0x10 / Left
-//                   Bit 5=Fire button  0b00100000 / 0x20 / Fire
+//                   Bit 2=Joy 0        %00000100 / 0x04 / Up
+//                   Bit 3=Joy 1        %00001000 / 0x08 / Down
+//                   Bit 4=Joy 2        %00010000 / 0x10 / Left
+//                   Bit 5=Fire button  %00100000 / 0x20 / Fire
         .var Joystick_Up_Bit = $04      // Read from port $911F
         .var Joystick_Down_Bit = $08    // Read from port $911F
         .var Joystick_Left_Bit = $10    // Read from port $911F
         .var Joystick_Right_Bit = $80   // Read from port $9120
         .var Joystick_Fire_Bit = $20    // Read from port $911F
 
-//      .var    ??? = $9112
-//      .var    ??? = $9113
+        .var VIC_VIA_1_DDR_B = $9112
+        .var VIC_VIA_1_DDR_A = $9113
 //      .var    ??? = $9114
 //      .var    ??? = $9115
 //      .var    ??? = $9116
@@ -93,13 +98,13 @@
                                                 // 0 selects a column
         .var VIC_VIA_2_Key_Row_Scan = $9121     // Read this 
         .var VIC_VIA_2_DDR_B = $9122
-//      .var VIC_VIA_2_DDR_B = $9123
-//                   Bit 7 = Joy 3      0b00000010 / 0x20 / Fire?
+        .var VIC_VIA_2_DDR_A = $9123
+//                   Bit 7 = Joy 3      %00000010 / 0x20 / Fire?
         .var VIC_VIA_2_Int_Enable = $912E
 
 // VIC20 Keyboard Matrix
 
-// Write to Port B($9120)column - 0 bit selects column to read - write a $7F (0b01111111) here and then read $9121 ad check the high order bit to read F7
+// Write to Port B($9120)column - 0 bit selects column to read - write a $7F (%01111111) here and then read $9121 ad check the high order bit to read F7
 // Read from Port A($9121)row
 
 //     7   6   5   4   3   2   1   0
@@ -127,18 +132,21 @@
 //  CTRL Q  W  E  R  T  Y  U  I  O  P  @  *  UA RESTORE   F3
 // STOP SL A  S  D  F  G  H  J  K  L  :  ;  =  RETURN      F5
 // C= SHIFT Z  X  C  V  B  N  M  ,  .  /  SHIFT  CDN CRT   F7
-//         [        SPACE BAR       ]
-
-
+//  // [        SPACE BAR       ]
 
 //
 //  Game Constants
 //
-        .var screen_width = 22  // 22 characters across ($16)
-        .var screen_height = 23 // 23 characters high ($17)
+        .var screen_width = $16  // 22 characters across ($16)
+        .var screen_height = $17 // 23 characters high ($17)
 
         .var initial_player_x = $0B
         .var initial_player_y = $12
+
+        .var Init_Alien_X_Pos = $2
+        .var Init_Alien_Y_Pos = $0
+
+        .var Alien_Kill_Hits = $6
 
         .var Player_Move_Up = 0
         .var Player_Move_Right = 1
@@ -149,6 +157,9 @@
         .var Alien_Right = $04
         .var Alien_Left = $08
         .var Alien_Down = $0C
+
+        .var Start_Level = 2
+        .var Init_Player_Lives = 3      // Also the initial number of Aliens
 
 // Colors
         .var Color_Black = 0
@@ -211,14 +222,16 @@
 // Scratch Memory Map
 
         .var Player_Direction = $20              // Player Direction - Most recent joystick direction
-// Unknown_0 = $21
-// Unknown_1 = $22
-// Unknown_2 = $23
-// Unknown_3 = $24
-// Unknown_4 = $25
-// Unknown_5 = $26
+        .var Delay_Amount = $21         // Save a delay size here and call Delay_By_Var but it's not clear that this is ever used. Might be able to delete???
+        .var Init_Alien_X = $22         // Shared location, always dangerous
+        .var Init_Alien_Y = $23         // Shared location, always dangerous
+        .var Temp_Index_Lo = $22        // Used as a indirect address low byte for indexing into tables, strings or lists
+        .var Temp_Index_Hi = $23        // 
+        .var Ladder_Start_Lo_Addr = $24 // Used when drawing ladders. Lo/Hi pointer to the video memory start of the ladder on screen
+        .var Ladder_Start_Hi_Addr = $25
+        .var Ladder_Length = $26        // Used when drawing ladders
         .var Current_Level = $27        // The current level in the game
-// Unknown_7 = $28
+        .var Num_of_Aliens_Level = $28  // This seems to be the number of aliens for each level
         .var Char_X = $29               // Character X Co-ordinate
         .var Char_Y = $2A               // Character Y Co-ordinate
         .var Char_To_Draw = $2B         // Character to Draw
@@ -229,43 +242,49 @@
         .var Aliens_Live_Count = $2F    // Number of active aliens on screen
         .var Alien_Anim_Frame = $30     // What frame of animation are we showing for alien? This gets incremented and then the lowest bit used to alternate between two frames
         .var Curr_Alien = $31           // Current Alien that we're processing
-// Unknown_17 = $32
+        .var Curr_Alien_Color = $32
         .var Curr_Alien_X = $33         // Current Alien X,Y location on screen
-        .var Curr_Alien_Y = $34
+        .var Curr_Alien_Y = $34         // Might be Alien color and have $32, $33, $34 wrong
 // Unknown_20 = $35
 // Unknown_21 = $36
-// Unknown_22 = $37
-// Unknown_23 = $38
-// Unknown_24 = $39
+        .var Curr_Alien_Status = $37            // Status of current alien which includes embedded direction
+        .var Current_Alien_Direction = $38      // Direction of Alien we're currently processing
+        .var Ladder_Start_Col_Lo_Addr = $39
+        .var Ladder_Start_Col_Hi_Addr = $3A
 
-        .var Player_X = $3A             // Initial Player X Co-ordinate
-        .var Player_Y = $3B             // Initial Player Y Co-ordinate
+        .var Alien_X = $3A                     // Alien Screen X Co-ordinate
+        .var Alien_Y = $3B                     // Alien Screen Y Co-ordinate
+
+        .var Player_X = $3A                     // Initial Player X Co-ordinate
+        .var Player_Y = $3B                     // Initial Player Y Co-ordinate
         .var Player_Top_Under_Char = $3C
         .var Player_Bot_Under_Char = $3D
         .var Player_Top_Under_Col = $3E
         .var Player_Bot_Under_Col = $3F
-
-// Unknown_31 = $40
-// Unknown_31 = $41
-// Unknown_31 = $42                    // X coord of the Alien we're currently processing
+        .var Player_Lives_Left = $40
+        .var Alien_Hits= $41
+        .var Killed_Alien_Level = $42                    // X coord of the Alien we're currently processing
 // Unknown_31 = $43
-        .var Num_Live_Aliens = $44     // Number of aliens on screen
-// Unknown_31 = $45
-// Unknown_31 = $46     // Number of Aliens?
-// Unknown_31 = $47     // Level for alien you killed??
-// Unknown_31 = $48     // Score for alien you killed??
+        .var Num_Live_Aliens = $44              // Number of aliens on screen
+        .var Dead_Alien_Level = $45
+        .var Num_Alien_Hit = $46                // Save the number of the alien that was hit
+        .var Current_Alien_Flr_Fall = $47       // Level for alien you killed??
+        .var Current_Alien_Level = $48          // Level for the Alien we're currently processing, if an alien survives going in a level it goes up a level and changes color
 
-
-//
 // Table of Data for Aliens
 
-        .var Alien_Data = $033B         //$33B to $3FF is available RAM not used when a game is running (Cassette buffer?)
+        .var Alien_Data = $033B         //$33B to $3FF is available RAM not used when a game is running (Vic 20 Cassette buffer) - How much are we using and
+                                        //what is upper limit? There are $C4 bytes and somewhere in the code we test for $C1. There might be some free space for code???
         //      X
         //      Y
         //      Color = Upper Nibble / Direction = Lower Nibble
-
-
+        //      Alien Status
+                //      %10000000      - Bit 7 ??
+                //      %01000000      - Bit 6 ??
+        
 // Screen Addresses used for drawing on screen - Screen is 22 ($16) characters across by 23 ($17) down
+
+        .var Lowest_Flr = $14           // The Char_Y of the lowest floor on the screen - line 20
 
         .var Screen_Start = $1E00
 
@@ -328,11 +347,10 @@
         .var Color_Line_22 = Color_Start+(21*screen_width)      // $97CE Player Count and Score
         .var Color_Line_23 = Color_Start+(22*screen_width)      // $97E4 Oxygen and High Score
 
-        * = $1000                   // Assemble to $1000 
+        * = $1000 "Main Program"                   // Assemble starting at $1000 
 
-        .byte $00           // 00 - no name?
+//       .byte $00           // 00 - no name?
 //        .byte $10, $00      // 0x1000 - start address to load the file in memory
-
 
 Main:   lda #$7F
         sta VIC_VIA_1_Int_Enable        // Interupt enable register - 6522 VIA #1
@@ -347,7 +365,7 @@ Main:   lda #$7F
         jsr Clear_Dashboard
 
         lda #$08                // Set screen and border colors
-        sta VIC_SCREEN_COLORS   // 0b00001000 = Black Border, Black Background and Normal Mode (note inverted)
+        sta VIC_SCREEN_COLORS   // %00001000 = Black Border, Black Background and Normal Mode (note inverted)
 
         lda VIC_COLUMN          // Set the top bit of to set part of video matrix address to ???
         ora #$80                // ??
@@ -363,8 +381,8 @@ Main:   lda #$7F
                                 // sets character map to start at $1C00
 
         lda #$00
-        sta $9113     // Data Direction Register in VIA #1
-        sta $9123     // Data Direction Register in VIA #1
+        sta VIC_VIA_1_DDR_A     // Data Direction Register in VIA #1
+        sta VIC_VIA_2_DDR_A     // Data Direction Register in VIA #1
         sta VIC_OSC_1_FREQ     // Frequency for oscillator 1
         sta VIC_OSC_2_FREQ     // Frequency for oscillator 2
         sta VIC_OSC_3_FREQ     // Frequency for oscillator 3
@@ -372,117 +390,128 @@ Main:   lda #$7F
 
         sta Alien_Anim_Frame    // Start with frame 0 for alien animation
 
-// $104D
-        lda #$02                // Set the current level
+Start_New_Game:
+        lda #Start_Level                        // Set the first level number
         sta Current_Level
+        
+Another_New_Game:
+        lda #Init_Player_Lives                        // Player starts game with 3 players - Is there a bonus player, could add this to the game at a certain number of points??
+        sta Player_Lives_Left
+        sta Num_of_Aliens_Level
 
-        lda #$03
-        sta $40
-        sta $28
-
-        tax                             // Refresh the player lives characters by painting them white
+        tax                             // Refresh the player lives characters by painting them white - Might have felt smart at the time but may as well as put the character there
         lda #Color_White
 !loop:  sta Color_Line_22,X             // Set color of line 22 on screen
         dex
         bne !loop-
 
-        lda #Char_0             // Character 0
+        lda #Char_0                     // Character 0
         ldx #$06
-!loop:  sta Screen_Score,X      // Put 6 0's across screen for SCORE
+!loop:  sta Screen_Score,X              // Put 6 "0"'s across screen for SCORE
         dex
         bne !loop-
 
 //
 // New Game - Jump here after a game over
 //
-// $1066
 New_Game:
-        lda #Char_2             // Draw Oxygen to screen as 2000
+        lda #Char_2                     // Reset Oxygen on screen to 2000
         sta Screen_Oxygen_Count
-        lda #Char_0
+        lda #Char_0                     // Could this be a short loop, would it be fewer bytes???
         sta Screen_Oxygen_Count+1
         sta Screen_Oxygen_Count+2
         sta Screen_Oxygen_Count+3
 
-        inc $28
-        inc Current_Level                 // Increment the level count
+        inc Num_of_Aliens_Level         // Not sure why we increment here instead of with each level?? - This starts at 3 but because we increment and only look at the lower 2 bits it starts the game at 0
+        inc Current_Level               // Increment the level count
 
         lda #$00
-        sta $48                 // Zero the level of alien you'll kill
-        sta $47                 // Zero the score for the alien you'll kill
-        sta $41                 // Zero the number of hits or how long the alien has been in hole??
+        sta Current_Alien_Level         // Zero the level of alien you'll kill
+        sta Current_Alien_Flr_Fall      // Zero the score for the alien you'll kill
+        sta Alien_Hits                  // Zero the number of hits or how long the alien has been in hole??
 
         jsr Draw_Floors
         jsr Draw_Ladders
         jsr Draw_Aliens
         jsr Initial_Draw_Player
 
-        lda $28
+        lda Num_of_Aliens_Level
         sta Num_Live_Aliens
         cmp #$04
-        bne Main_Loop           // ??
+        bne Main_Loop                   // We haven't run out of lives yet so keep playing
 
-// $109C
-        jsr Draw_Game_Start_Message     // Draw either Game Over or F7 message to start game??
-        jmp Main_Loop
+        jsr Draw_Game_Start_Message     // Draw either Press 'F7' to Start Game message to start game?? Loops until pressed
+
+        jmp Main_Loop                   // Start the game
 
 Lose_Life:
-        ldy $40                 //
+        ldy Player_Lives_Left           // Decrement number of lives
         dey
-        sty $40
-        beq Out_Of_Lives        // Branch if 0, the player is out of lives
-        lda #Color_Black        // Leave the Player symbol on screen but make it black so it disappears
+        sty Player_Lives_Left
+        beq Out_Of_Lives                // Branch if 0, the player is out of lives
+
+        lda #Color_Black                // Leave the Player symbol on screen but make it black so it disappears - just too dumb to be clever!
         sta Color_Line_22+1,Y
-        jmp $13BE
+
+        jmp Game_Over
 
 Out_Of_Lives:
         jsr Comp_High_Score             // Check for new high score $1D0C
-        jsr Draw_Game_Over_Message      // $1A84
-        jsr Clear_Main_Screen           // $13C4
-        jmp $104D
-        
-        jsr $162C
+        jsr Draw_Game_Over_Message
+        jsr Clear_Main_Screen
+
+        jmp Another_New_Game
+
+End_Alien_Loop:
+        jsr Draw_an_Alien
 
         ldx Curr_Alien
-        lda $3A
+        lda Alien_X
         sta Alien_Data,X
         inx
-        lda $3B
+        lda Alien_Y
         sta Alien_Data,X
+        
         ldy #$0F
-!loop:  tya
+
+!loop:  tya                             // Save index into alien data
         pha
-        jsr $15FC
+
+        jsr Draw_Alien
+
         inc Alien_Anim_Frame            // Increment to alternate to next frame of alien animation
-        jsr $1D36
-        pla
+
+        jsr Safe_Delay                  // Delay
+
+        pla                             // Retrieve index into alien data
         tay
         dey
         bne !loop-
-        jmp $109C
+        
+        jmp Lose_Life
 
-// $10DB
-// L00DD:
 Main_Loop:
-        jsr Move_Aliens                // Move all the aliens
-        jsr Move_Player                // Move the player??
-        jsr Decrement_Oxygen           // Decrement the Oxygen Counter??
+        jsr Move_Aliens                 // Move all the aliens
+        jsr Move_Player                 // Move the player??
+        jsr Decrement_Oxygen            // Decrement the Oxygen Counter??
+
         jmp Main_Loop
 
-// $10E7??
 Move_Aliens:
-        lda $28                 // Get the current level number and x4 to use as index
+        lda Num_of_Aliens_Level         // Get the current level number and x4 to use as index
         clc
         asl
         asl
-        sta $2F
+        sta Aliens_Live_Count
 
-        ldx #$01                // Start processing aliens from the first one
+        ldx #$01                        // Start processing aliens from the first one
 !loop:  stx Curr_Alien
-        jsr $162C               // Draw_Alien??
-        jsr $1650
-        jsr $1862
-        jsr $15FC
+
+        jsr Draw_an_Alien               // Draw_Alien??
+        jsr Process_Alien               // We only call this here so we could put the code inline??
+        jsr Get_Alien_Data
+        jsr Draw_Alien
+
         inx                             // Inc to look at next Alien and compare with the number of Aliens on screen
         cpx Aliens_Live_Count
         bcc !loop-
@@ -493,7 +522,6 @@ Move_Aliens:
         jsr Delay_By_X
         rts
 
-// $110B??
 Move_Player:
         lda Player_X            // Get the Player X and Y cordinate and set up to draw Character
         sta Char_X
@@ -507,30 +535,30 @@ Move_Player:
         beq !B0+
 
         cmp #Char_Ladder_Top    // Is there a ladder below? If so we're still not back on the ground so keep falling
-        bne Handle_Move_Player  // There is something else under the player so don't fall - L0141
+        bne Handle_Move_Player  // There is something else under the player so don't fall
 
 // There was nothing under the character so make them fall??
-!B0:    jsr $150E               // Draw the Player
+!B0:    jsr Draw_Player         // Draw the Player
         inc Char_Y              // Move the player down one character
 
         jsr Get_Chars_Under_Player
 
         lda VIC_OSC_3_FREQ      // Read frequency of Oscilllator 3
-        bne L0136
+        bne !B1+
 
         lda #$80
         sta VIC_OSC_3_FREQ      // Set frequency of Oscilllator 3
 
-L0136:  lda #$02
+!B1:    lda #$02
         adc VIC_OSC_3_FREQ      // Add to frequency of Oscilllator 3
         sta VIC_OSC_3_FREQ      // Set frequency of Oscilllator 3
-        jmp $13F3
+
+        jmp Draw_Player_Falling                //$13F3
 
 //
 // ??
 //
 
-L0141:  
 Handle_Move_Player:
         lda #$00                // Silent frequency of Oscilllator 3
         sta VIC_OSC_3_FREQ
@@ -545,15 +573,15 @@ Handle_Move_Player:
 
 !B1:    cmp #Player_Move_Right  // If not Right check next direction
         bne !B2+
-        jmp Handle_Move_Right   // $121A
+        jmp Handle_Move_Right
 
 !B2:    cmp #Player_Move_Down   // If not Down check next direction
         bne !B3+
-        jmp Handle_Move_Down    // $1270
+        jmp Handle_Move_Down
 
 !B3:    cmp #Player_Move_Left   // If not Left check return
         bne !B4+                // Could branch to another RTS and save a byte??
-        jmp Handle_Move_Left    // $142A
+        jmp Handle_Move_Left
 
 !B4:    rts
 
@@ -570,7 +598,7 @@ Handle_Move_Up:
         cmp #screen_height-5            // Subtract two lines for dashboard, one line of bricks and lower body ($12)
         beq Player_No_Move              // If at bottom of screen player shouldn't move down - Why??
 
-        jsr Check_Alien_Collision       // $1529
+        jsr Check_Alien_Collision
 
         lda Player_Bot_Under_Char       // If the player is at the top of the ladder they can't climb up further so the player shouldn't move
         cmp #Char_Ladder_Top
@@ -598,7 +626,6 @@ Handle_Move_Up:
         cmp #screen_width
         beq Player_No_Move
 
-// L01A6:
 !B1:    dec Char_Y
         jsr Get_Char_From_Screen
         lda Char_To_Draw
@@ -616,17 +643,16 @@ Handle_Move_Up:
         beq Player_No_Move
         
         cmp #Char_Alien_0               // Did the player hit an Alien? This only check the 0 frame shouldn't we be checking for Char_Alien_1 also??
-        bne L01CA
+        bne !B2+
 
         lda #Char_Blank
         sta Char_To_Draw
-L01CA:  jsr Draw_Char_On_Screen
+!B2:    jsr Draw_Char_On_Screen
 
-//L01CD:
+
 Player_No_Move:                         // Branch to here and return if the player actually isn't going to move. Edge of screen, top of ladder, etc.
         rts
 
-// L01CE:
 Climb_Ladder_Up:
         jsr Get_Char_From_Screen        // Get what is on screen under the player
 
@@ -637,21 +663,21 @@ Climb_Ladder_Up:
         cmp #Player_Climb_Bot_0
         bne !B1+
 
-//L01DE:
 !B0:    lda #Player_Climb_Top_1
         sta Char_To_Draw
         jsr Draw_Char_On_Screen
-// $11E3
+
 Draw_Lower_Player:
         inc Char_To_Draw
         inc Char_Y
+
 Draw_Lower_Player_2:
         jsr Draw_Char_On_Screen
         dec Char_Y
         rts
 
-//L01EF:
 !B1:    jsr Get_Char_From_Screen
+
         lda Char_To_Draw
         cmp #Player_Climb_Top_1
         bne !B0-
@@ -661,10 +687,10 @@ Draw_Lower_Player_2:
         bne !B0-
         
         dec Char_Y
-        jsr $147D
+        jsr Check_Player_Position
         
         inc Char_Y
-        jsr $150E
+        jsr Draw_Player
         
         dec Char_Y
         jsr Get_Chars_Under_Player
@@ -676,16 +702,15 @@ Draw_Lower_Player_2:
         jsr Draw_Char_On_Screen
         jmp Draw_Lower_Player
 
-// $121A
 Handle_Move_Right:
         jsr Get_Char_From_Screen
 
         lda Char_To_Draw
-        cmp #Player_Climb_Top_1         // Should this be cmp #$21
-        bne !B0+                        // L023C
+        cmp #Player_Climb_Top_1
+        bne !B0+
         jsr Check_Below
         cmp #Char_Player_Leg_0
-        bne !B0+                        // L023C
+        bne !B0+
 
 !loop:  lda #Player_Run_Top_0           // Draw player body upper character
         sta Char_To_Draw
@@ -695,7 +720,6 @@ Handle_Move_Right:
         sta Char_To_Draw
         jmp Draw_Lower_Player_2
 
-// L023C:
 !B0:
         jsr Get_Char_From_Screen
         
@@ -708,29 +732,27 @@ Handle_Move_Right:
         bne !loop-
         
         inc Char_X
-        jsr $147D
+        jsr Check_Player_Position
 
         dec Char_X
-        jsr $150E
+        jsr Draw_Player
         
         inc Char_X
         jsr Get_Chars_Under_Player
 
         lda #Color_White
         sta Color_To_Draw
-        lda #Player_Climb_Top_1          // Not sure if this is right label, it was $21
+        lda #Player_Climb_Top_1         // 
         sta Char_To_Draw
         jsr Draw_Char_On_Screen
         inc Char_Y
-        lda #Char_Player_Leg_0          // $1A is this correct??
+        lda #Char_Player_Leg_0          //
         sta Char_To_Draw
         jmp Draw_Lower_Player_2
 
-// L026F:
 Player_on_Ladder:
-        jmp $13E3                       // Jump because otherwise the branch is too far away
+        jmp Player_Climb                // Jump because otherwise the branch is too far away
 
-// $1270
 Handle_Move_Down:
         lda Player_Top_Under_Char       // Is the player on the ladder
         cmp #Char_Ladder_Main
@@ -748,17 +770,16 @@ Handle_Move_Down:
         cmp #screen_height-5            // Subtract two lines for dashboard, one line of bricks and lower body ($12)
         bne Climb_Ladder_Down           // If at the bottom return without moving, otherwise handle climbing down
 
-// L028C:
 Player_Not_Moving:
         rts
 
-//L028D:
 Climb_Ladder_Down:
-        jsr Check_Alien_Collision       // $1529
+        jsr Check_Alien_Collision
 
-        lda Get_Chars_Under_Player                       // Why does this seem to load the first byte of a subroutine???
+// Potential Bug
+        lda Get_Chars_Under_Player      // Crazy but in the original this was a LDA Get_Chars_Under_Player, how that ever worked I don't know
         cmp #Char_Ladder_Top            // Is the player on the top of a ladder
-        beq Player_Not_Moving                       // If yes, make the player walk down the ladder.
+        beq Player_Not_Moving           // If yes, make the player walk down the ladder.
         
         inc Char_Y
         jsr Get_Char_From_Screen
@@ -774,72 +795,73 @@ Climb_Ladder_Down:
         lda Char_X
         cmp #$FF
         beq Player_Not_Moving           // If player is at left of screen return without moving/digging
-        bne L02BA
+        bne Fill_Hole
 
-// L02B2:
 !B0:    inc Char_X                      // The player is digging to the right but check if he's digging off the right of the screen
         lda Char_X                      // Are we at the right of the screen?
         cmp #screen_width
         beq Player_Not_Moving           // If player is at right of screen return without moving/digging
 
-// $12B8??
-L02BA:  jsr Get_Char_From_Screen        // Get the character on the screen that the player is digging
-        dec Char_To_Draw                // Subtract one because we're digging the hole or this could be filling in the hole??
+Fill_Hole:
+        jsr Get_Char_From_Screen        // Get the character on the screen that the player was digging
+        dec Char_To_Draw                // Subtract one to fill in the hole
 
         lda Char_To_Draw                // If it's $00 then Player was digging a ladder so return without the player moving
         beq Player_Not_Moving
 
         cmp #Char_Alien_1-1             // We decremented the character so check for the character minus 1
-        beq L02DF                       // Branch to handle hitting an alien
+        beq Hit_Alien                   // Branch to handle hitting an alien
         cmp #Char_Alien_0-1
-        beq L02DF
+        beq Hit_Alien
 
         cmp #$FF                        // If it went negative we hit an empty hole
-        beq L02D7
+        beq !B0+
 
         cmp #Char_Floor-1
         beq Player_Not_Moving
+
         jsr Draw_Char_On_Screen
         rts
 
-L02D7:  lda #Char_Floor_Dug_4
+!B0:    lda #Char_Floor_Dug_4
         sta Char_To_Draw
         jsr Draw_Char_On_Screen
         rts
 
-L02DF:
 Hit_Alien:
-        inc $41                 // +1 the number of times the Alien has been hit. If it's more than 6 kill the alien
-        lda $41
-        cmp #$06
+        inc Alien_Hits                  // +1 the number of times the Alien has been hit. If it's more than 6 kill the alien
+        lda Alien_Hits
+        cmp #Alien_Kill_Hits            // Have we hit it enough to kill the Alien
         bcs !B0+
         rts
 
 !B0:    jsr Chk_Alien_Impact
-        bcs Alien_Collided     // Carry set if collission
+        bcs Alien_Collided              // Carry set if collission
         rts
 
 Alien_Collided:
-        dex             // X is the number of the Alien that collided, save to scratch
-        stx $46
+        dex                             // X is the index to the Alien that collided, save to scratch
+        stx Num_Alien_Hit
+        inx                             // Increment to point at the status byte of the aliens data
         inx
         inx
-        inx
-        lda Alien_Data,X
+        lda Alien_Data,X                // Get the status and zero out everything other than the bottom two bit %00000011
         and #$03
-        sta $42
+        sta Killed_Alien_Level            // Save the Aliens new status - might be color but also level to determine points??
         tay
-        lda $1B64,Y
-        sta $45
-        sta $48
+        lda Alien_Level,Y               // Use the level to look up the color for the Alien
+        sta Dead_Alien_Level
+        sta Current_Alien_Level
 
         lda #$00                        // Reset the count of the number of times the alien has been hit
-        sta $41
+        sta Alien_Hits
+
+Now_Fill_Hole:
         jsr Draw_Fill_Hole              // Fill the hole the Alien was in. This is only called once could be in line code ??? $1DB6
 
-        inc $47
-        jsr Alien_Fall                  // $1DC2
-        dec $45
+        inc Current_Alien_Flr_Fall
+        jsr Alien_Fall
+        dec Dead_Alien_Level
 
         lda #Char_Blank                 // Draw blank character
         sta Char_To_Draw
@@ -850,35 +872,36 @@ Alien_Collided:
         jsr Check_Below
 
         lda Char_To_Draw
-        sta $33
+        sta Curr_Alien_X
         lda Color_To_Draw
-        sta $34
+        sta Curr_Alien_Y
         jsr Alien_Fall
 
         jsr Check_Below                 // Check if there is floor under the Alien
         cmp #Char_Floor
         bcc !B0+
         cmp #Char_Floor_Dug_4+1
-        bcc !B1+                // L034A
-//L0335
+        bcc !B1+
+
 !B0:    cmp #Char_Ladder_Main
         beq !B1+
 
-        lda $33
+        lda Curr_Alien_X
         sta Char_To_Draw
-        lda $34
+        lda Curr_Alien_Y                // This might not be right label for $34, why are we putting Y co-ord in Color_To_Draw???
         sta Color_To_Draw
         jsr Draw_Char_On_Screen
-        jsr Alien_Fall
-        jmp $1305
 
-// L034A:
-!B1:    lda $45
-        beq L0386
-        cmp #$0F
-        bcs L0386
+        jsr Alien_Fall
         
-        ldx $46
+        jmp Now_Fill_Hole
+
+!B1:    lda Dead_Alien_Level
+        beq !B2+
+        cmp #$0F
+        bcs !B2+
+
+        ldx Num_Alien_Hit
         lda Char_X
         sta Alien_Data,X
 
@@ -887,46 +910,45 @@ Alien_Collided:
         sta Alien_Data,X
 
         inx
-        lda $34
+        lda Curr_Alien_Y                 // Get Alien X or color???
         clc
-        asl             // Multiply by 16 to use as index
+        asl                             // Move into upper half of Alien status??
         asl
         asl
         asl
         sta Alien_Data,X
 
-        lda $33
-        and #$0F
-        ora Alien_Data,X
+        lda Curr_Alien_X                // Get the current alien status
+        and #$0F                        // Clear the upper nibble of the byte
+        ora Alien_Data,X                // Or with the curent alien status in table and save to table
         sta Alien_Data,X
         
-        inx
-        lda Alien_Data,X
-        and #$9F
+        inx                             // Get the Alien status
+        lda Alien_Data,X        
+        and #$9F                        // Clear bit 6 and 5 and the set bit 6, but what are they??
         ora #$40
         sta Alien_Data,X
 
         lda #$00
-        sta $48         // Zero the current alien level and score ready for the next alien killed
-        sta $47         // Do we have to zero both of these, won't they just get over ridden?
+        sta Current_Alien_Level         // Zero the current alien level and score ready for the next alien killed
+        sta Current_Alien_Flr_Fall      // Do we have to zero both of these, won't they just get over ridden?
         rts
 
-//L0386
-L0386:  lda #Char_Alien_In_Hole         // Draw Alien in Hole??
+!B2:    lda #Char_Alien_In_Hole         // Draw Alien in Hole??
         sta Char_To_Draw
-        lda $42
+        lda Killed_Alien_Level
         sta Color_To_Draw
         jsr Draw_Char_On_Screen
 
-        jsr $1D36
+        jsr Safe_Delay                  // Delay
 
-        lda $33
+        lda Curr_Alien_X
         sta Char_To_Draw
-        lda $34
+        lda Curr_Alien_Y                // Alien color or Y co-ord??? $34 might be mis-labeled
         sta Color_To_Draw
         jsr Draw_Char_On_Screen
 
-        ldx $46
+        ldx Num_Alien_Hit
         lda #$00
         sta Alien_Data,X
         inx
@@ -945,14 +967,11 @@ L0386:  lda #Char_Alien_In_Hole         // Draw Alien in Hole??
         beq !B0+                  // If 0 we've killed all the aliens
         rts
 
-// $13BE
+Game_Over:
 !B0:    jsr Clear_Main_Screen
         jmp New_Game              // Game over start a new game $1066
 
-// $13C4
-//
 // Clear Main Screen - Clear the screen but not the two lines of dashboard
-//
 Clear_Main_Screen:
         ldx #$00          // Clear the screen and set the color
 !loop:  lda #$01          // Set color to XXX
@@ -972,24 +991,23 @@ Clear_Main_Screen:
 
         rts
 
-//$13E6
+Player_Climb:
         jsr Get_Char_From_Screen
 
-        lda Char_To_Draw                 // Get the character that was retreived from the screen
-        cmp #Player_Climb_Top_0          // 
-        bne !B1+
+        lda Char_To_Draw                // Get the character that was retreived from the screen
+        cmp #Player_Climb_Top_0         // Are we showing the first frame of climbing for the players upper body?
+        bne !B1+                        // If not then check for the other frame and move the player
 
-        jsr Check_Below
-        cmp #Player_Climb_Bot_0
-        bne !B1+
+        jsr Check_Below                 // Check the lower half of the player animation
+        cmp #Player_Climb_Bot_0         // Are we showing the first frame of climbing for the players upper body?
+        bne !B1+                        // If not then check for the other frame and move the player
 
-// $13F3??
+Draw_Player_Falling:                    // ??
 !B0:    lda #Player_Climb_Top_1
         sta Char_To_Draw
         jsr Draw_Char_On_Screen
         jmp Draw_Lower_Player
 
-//L03FF
 !B1:    jsr Get_Char_From_Screen
         lda Char_To_Draw
         cmp #Player_Climb_Top_1
@@ -998,32 +1016,34 @@ Clear_Main_Screen:
         jsr Check_Below
         cmp #Player_Climb_Bot_1
         bne !B0-
+
         inc Char_Y
-        jsr $147D
+        jsr Check_Player_Position
         dec Char_Y
-        jsr $150E
+        jsr Draw_Player
         inc Char_Y
         jsr Get_Chars_Under_Player
+        
         lda #Color_White
         sta Color_To_Draw
         lda #Player_Climb_Top_0
         sta Char_To_Draw
         jsr Draw_Char_On_Screen
+        
         jmp Draw_Lower_Player
 
-// $142A
 Handle_Move_Left:
         jsr Get_Char_From_Screen
         
         lda Char_To_Draw
         cmp #Player_Climb_Top_0
-        bne L044C
+        bne !B1+
         
         jsr Check_Below
         cmp #Player_Run_Left_Bottom_0
-        bne L044C
+        bne !B1+
 
-L043C:  lda #Player_Run_Top_0         // Draw player body upper character
+!B0:    lda #Player_Run_Top_0           // Draw player body upper character
         sta Char_To_Draw
         jsr Draw_Char_On_Screen
         inc Char_Y                      // Move down a character and draw player body lower character  ??
@@ -1031,21 +1051,21 @@ L043C:  lda #Player_Run_Top_0         // Draw player body upper character
         sta Char_To_Draw
         jmp Draw_Lower_Player_2
 
-L044C:
+!B1:
         jsr Get_Char_From_Screen
         lda Char_To_Draw
         cmp #Player_Run_Top_0
-        bne L043C
+        bne !B0-
 
         jsr Check_Below
         cmp #Char_Player_Body_1
-        bne L043C
+        bne !B0-
 
         dec Char_X
-        jsr $147D
+        jsr Check_Player_Position
         
         inc Char_X
-        jsr $150E
+        jsr Draw_Player
 
         dec Char_X
         jsr Get_Chars_Under_Player
@@ -1061,16 +1081,18 @@ L044C:
         sta Char_To_Draw
         jmp Draw_Lower_Player_2
 
-// $147D
-        lda #$00                // Silence the Noise generator
-        sta VIC_NOISE
-        sta $41
+Check_Player_Position:
+        lda #$00
+        sta VIC_NOISE           // Silence the Noise generator
+        sta Alien_Hits          // 
+
         lda Char_X              // Is the character off the right of the screen
         cmp #screen_width
-        bcs !B3+                // L04C6
+        bcs !B3+
+
         lda Char_Y              // Is the character at the bottom of the play area of the screen
         cmp #screen_height-3
-        bcs !B3+                // L04C6
+        bcs !B3+
 
         jsr Get_Char_From_Screen
         lda Char_To_Draw
@@ -1079,9 +1101,8 @@ L044C:
 
         cmp #Player_Shovel_Right_Top_0-1   // ??
         bcs !B0+
-        jmp $14C4
+        jmp !B3+                // Could this be a bcc???
 
-// L04A2:
 !B0:    jsr Check_Below         // Check below the character
         cmp #Char_Floor         // If there is floor underneath
         bcc !B1+
@@ -1089,7 +1110,6 @@ L044C:
         bcs !B1+
         jmp !B3+
 
-// L04B0:
 !B1:    inc Char_Y
         jsr Check_Below
         dec Char_Y
@@ -1103,13 +1123,10 @@ L044C:
 
 !B2:    rts
 
-// $14C4
-// L04C6:
 !B3:    pla
         pla
         rts
 
-// $14C7
 // Set the players initial postion on screen
 Initial_Draw_Player:
         lda #initial_player_x
@@ -1136,8 +1153,6 @@ Initial_Draw_Player:
 //
 // Get what us under player characters on screen??
 //
-
-// $14EB
 Get_Chars_Under_Player:
         lda Char_X
         sta Player_X
@@ -1162,7 +1177,6 @@ Get_Chars_Under_Player:
 //
 // Draw Player??
 //
-// $150E
 Draw_Player:
         lda Player_Top_Under_Char
         sta Char_To_Draw
@@ -1185,33 +1199,31 @@ Draw_Player:
 //
 // Check to see what the alien might have collided with??
 //
-// $1529
 Check_Alien_Collision:
         jsr Check_Below         // Check_Right??
         cmp #Char_Player_Leg_0  // Has the alien collided with the players leg animation 0
-        beq L054F
+        beq !B0+
         cmp #Char_Player_Leg_1  // Has the alien collided with the players leg animation 1
-        beq L054F
+        beq !B0+
 
-        cmp #$19
-        beq L056A
+        cmp #Char_Player_Body_1
+        beq !B3+
         cmp #Player_Run_Left_Bottom_0
-        beq L056A
+        beq !B3+
         cmp #Player_Shovel_Right_Bot_0
-        beq L054F
+        beq !B0+
         cmp #Player_Shovel_Right_Bot_1
-        beq L0565
+        beq !B2+
         cmp #Player_Shovel_Left_Bot_0
-        beq L056A
+        beq !B3+
         cmp #Player_Shovel_Left_Bot_1
-        beq L056F
+        beq !B4+
         rts
 
 // Alien has hit Player?
-L054F:
-// $154D
+!B0:
         lda #Player_Shovel_Right_Top_1
-// $154F
+!B1:
         sta Char_To_Draw
         jsr Draw_Char_On_Screen
         inc Char_To_Draw
@@ -1223,56 +1235,58 @@ L054F:
         sta VIC_NOISE
         rts
 
-//L0565
-L0565:  lda #Player_Shovel_Right_Top_0
-        jmp $154F       // Could this be a BNE branch instead?
+!B2:  lda #Player_Shovel_Right_Top_0
+        jmp !B1-        // Could this be a BNE branch instead?
 
-L056A:  lda #Player_Shovel_Left_Top_1
-        jmp $154F       // Could this be a BNE branch instead?
+!B3:
+        lda #Player_Shovel_Left_Top_1
+        jmp !B1-        // Could this be a BNE branch instead?
 
-L056F:  lda #Player_Shovel_Left_Top_0
-        jmp $154F       // Could this be a BNE branch instead?
+!B4:
+        lda #Player_Shovel_Left_Top_0
+        jmp !B1-        // Could this be a BNE branch instead?
 
-// $1572
 Draw_Aliens:
         ldx #$01
 
-        lda #$02                // Initial X coordinate - line 2 - of alien??
-        sta $22
-        lda #$00
-        sta $23
+        lda #Init_Alien_X_Pos           // Initial X,Y coordiate for Alien - 2 (counting from 0) and 0 across but that changes
+        sta Init_Alien_X
+        lda #Init_Alien_Y_Pos
+        sta Init_Alien_Y
 
-        lda #$80
+        lda #$80                        // Start making a noise as the Aliens appear
         sta VIC_OSC_1_FREQ
-
-        lda #$0F
+        lda #$0F                        // ???
         sta VIC_VIA_1_AUX_COL_VOL
 
-        lda $28         // Get number of aliens
-        clc             // x4 because there are 4 bytes per alien in the alien data
+        lda Num_of_Aliens_Level         // Get number of aliens that should be on this level
+        clc                             // x4 because there are 4 bytes per alien in the alien data table
         asl
         asl
-        sta $2F
-// L058F:
+        sta Aliens_Live_Count           // Use that to check when we're done processing all Aliens
+
 Next_Alien:
-        lda $22
+        lda Init_Alien_X                // Set the Aliens initial X co-ordinate in the Alien data table
         sta Alien_Data,X
         sta Char_X
-        tay
+        tay                             // Add two to the Alien X co-ordinate to start placing then further to the right as they appear
         iny
         iny
-        cpy #Player_Climb_Bot_1
-        bcc !B0+
+        cpy #screen_width               // Have we gone past the width of the screen?
+        bcc !B0+                        // If not keep going and draw
 
-        ldy #$02
-        inc $23
-// L05A1:
-!B0:    sty $22
-        inx
-        ldy $23                         // Get the alien Y coord??
-        lda Floor_Level_Y,Y             // Look up the initial position of the alien on the floor
+        ldy #Init_Alien_X_Pos           // If we have gone of the right edge, reset back to the Left of screen
+        inc Init_Alien_Y                // Move the Alien down one, this is actually a floor number, we then look up the actual Y coord of the floor
+
+!B0:    sty Init_Alien_X                // Save the new Alien X coordinate
+
+        inx                             // move to the next entry in the Alien Table
+
+        ldy Init_Alien_Y                // Get the alien Y coord
+        lda Floor_Level_Y,Y             // Look up the position of the alien on the floor based on the Y - this seems cumbersome???
         sta Alien_Data,X
         sta Char_Y
+
         inx
         jsr Get_Char_From_Screen
         lda Color_To_Draw
@@ -1288,13 +1302,13 @@ Next_Alien:
         sta Alien_Data,X
 
         inx
-        lda #$D7
+        lda #$D7                        // Set the initial Alien status - %11010111 - Not sure excatly what the bits represent yet???
         sta Alien_Data,X
         
-        cpx $2F
-        bcs !B1+                        // L05EC
+        cpx Aliens_Live_Count
+        bcs !B1+
         
-        txa
+        txa                             // Save the index into the Alien data table on to the stack
         pha
 
         lda #Char_Alien_1               // Draw alien
@@ -1303,37 +1317,37 @@ Next_Alien:
         sta Color_To_Draw
         jsr Draw_Char_On_Screen
         
-        lda #$04
+        lda #$04                        // Play a rising tone for the time the Aliens are appearing - Increase the tone and pause
         adc VIC_OSC_1_FREQ
         sta VIC_OSC_1_FREQ
 
         ldx #$50
         jsr Delay_By_X
 
-        pla
+        pla                             // Retrieve the index into the Alien data table on to the stack
         tax
-// L05EC:
+
 !B1:    inx
-        cpx #$C1
+        cpx #$C1                        // Are we above the maximum index for the number of Aliens??? 4 x the maximum number? $C1 is a big number
         bne Next_Alien
 
-        lda #$00                // Silence sound
+        lda #$00                        // Silence sound
         sta VIC_OSC_1_FREQ
         
         rts
 
-// Y co-ordinate of the line above each floor for the Aliens
-// $15F5
+// Y co-ordinate of the line above each floor for the Aliens - instead of a table might just be able to increment with each addition.
+// Can higher level should start with more difficult aliens set at higher levels???
 Floor_Level_Y:
         .byte $01,$04,$07,$0A,$0D,$10,$13
 
 Draw_Alien:
-        lda Alien_Anim_Frame            // Test if this number odd or even? Animation frame?
+        lda Alien_Anim_Frame            // Test if this number odd or even, use to determine which animation frame to draw
         and #$01
         beq !B0+
 
-        lda #Char_Alien_1                // Frame 1 of player or alien animation
-        sta Player_Anim+1               // Self-modified code alert - $1625             - Not sure if self modifying code actually saved us anything here
+        lda #Char_Alien_1               // Frame 1 of player or alien animation
+        sta Player_Anim+1               // Self-modified code alert - $1625             - Not sure if self modifying code actually saved us anything here??
         bne !B1+
 
 !B0:    lda #Char_Alien_0                // Frame 0 of player or alien animation
@@ -1352,13 +1366,12 @@ Draw_Alien:
         sta Color_To_Draw
 
  Player_Anim:
-        lda #Char_Alien_0               // The value loaded in A is set by self-modifying code above.
+        lda #Char_Alien_0               // The value loaded in A is set by self-modifying code above
         sta Char_To_Draw
         jsr Draw_Char_On_Screen
         rts
 
-// $162C
-// Draw_Alien:
+Draw_an_Alien:
         ldx Curr_Alien                         // Get the alien's X, Y and Color
         lda Alien_Data,X
         sta Char_X
@@ -1381,224 +1394,223 @@ Draw_Alien:
         jsr Draw_Char_On_Screen
         rts
 
-// $1650
+Process_Alien:
         ldx Curr_Alien                  // Get current index into Alien Date table
-        lda Alien_Data,X
+        lda Alien_Data,X                // Get Alien X Screen Coordinate
         sta Char_X
-        sta $33
+        sta Curr_Alien_X
         inx
-        lda Alien_Data,X
+        lda Alien_Data,X                // Get Alien Y Screen Coordinate
         sta Char_Y
-        sta $34
+        sta Curr_Alien_Y
         inx
-        lda Alien_Data,X
-        sta $32
+        lda Alien_Data,X                // Get Alien Color
+        sta Curr_Alien_Color
         inx
-        lda Alien_Data,X
-        bmi !B0+
-        jmp $1861
-// L0672:
-!B0:    rol
+        lda Alien_Data,X                // Get Alien Status data
+        bmi !B0+                        // Bit 7 set? If yes?
+        jmp Just_Return                 // This appears to just jump to an RTS, why not just do an RTS here???
+
+!B0:    rol                             // Rotate and check what was bit 6, is it set? If yes?
         bmi !B1+
-        jmp $181C
+        jmp Set_Alien_Status            // Not set so...
 
-// L0678:
 !B1:    jsr Check_Below                 // Check to see if the Alien is over a hole that has been dug
-        cmp #Char_Floor_Dug_1
-        bcc Alien_In_Hole
+
+        cmp #Char_Floor_Dug_1           // If the character under the Alien is less than or greater than any of the Dug hole characters they can keep going
+        bcc Alien_Keep_Moving
         cmp #Char_Floor_Dug_4+1
-        bcs Alien_In_Hole               // Put the Alien in the hole??
+        bcs Alien_Keep_Moving
 
-        inc Char_Y
-        jmp $12B8
+        inc Char_Y                      // The Alien is over a partly dug hole so point at that character and jump to code to fill hole
+        jmp Fill_Hole
 
-// L0688:
-Alien_In_Hole:                  // May be it's alien NOT in hole??
-        ldx Curr_Alien                 // Get the Alien direction from table??
+Alien_Keep_Moving:                      // May be it's alien NOT in hole??
+        ldx Curr_Alien                  // Get the Alien direction from table??
         inx
         inx
         inx
         lda Alien_Data,X
-        and #$0C                // Mask the direction bits of data for Alien 0b00001100
-        beq Alien_Going_Up      // L06A6     If 0 then the Alien is going Up
+        and #$0C                        // Mask the direction bits of data for Alien %00001100
+        beq Alien_Going_Up              // If 0 the Alien is going Up
 
-        cmp #Alien_Down         // If $0C then the Alien is going Down
-        beq Alien_Going_Down    // L06BB
+        cmp #Alien_Down                 // If $0C the Alien is going Down
+        beq Alien_Going_Down
 
-        cmp #Alien_Right        // If $04 then the Alien is going Right
-        beq Alien_Going_Right           // L06A1
+        cmp #Alien_Right                // If $04 the Alien is going Right
+        beq Alien_Going_Right
 
 Alien_Going_Left:
-        dec Char_X                      // If $08 then the Alien is going Left
+        dec Char_X                      // It has to have been $08 so the Alien is going Left
         jmp Check_Alien                 //$16BB
 
-// L06A1:
 Alien_Going_Right:
         inc Char_X                      // Move Alien Right
-        jmp Check_Alien                 // $16BB
+        jmp Check_Alien
 
-// L06A6:
 Alien_Going_Up:
-        dec Char_Y                      // Move Alien Left
+        dec Char_Y                      // Move Alien Up
 
-        jsr Get_Char_From_Screen
-        lda Char_To_Draw
-        bne Check_Alien                 // L06BD
+        jsr Get_Char_From_Screen        // Check the character under the aliens new position
+        lda Char_To_Draw                // If it's 0 then it's a empty character and they have gone off the top of a ladder
+        bne Check_Alien                 // If not, check but keep the alien moving
 
-        jsr Check_Below                 // Has the Alien reached the top of a ladder?
+        jsr Check_Below                 // Check if the Alien has reached the top of a ladder?
         cmp #Char_Ladder_Top
-        bne !B0+                        //L06B8                       // If not at top of ladder keep going
+        bne !B0+                        // If not at top of ladder keep going  -- Check_Alien might be in reach to branch directly
+
         inc Char_Y                      // If at top of ladder put him back down and keep going
-// L06B8
-!B0:    jmp Check_Alien                 // $16BB
 
-//L06BB:
+!B0:    jmp Check_Alien
+
 Alien_Going_Down:
-        inc Char_Y
+        inc Char_Y                      // Move Alien down ladder
 
-// $16BB
-L06BD:
-Check_Alien:
-        lda Char_X                      // Is the Alien at the right edge of screen?
-        cmp #screen_width
+Check_Alien:                            // Check if the Alien should keep moving
+        lda Char_X                      // Is the Alien off the right edge of screen?
+        cmp #screen_width               // If yes jump to reverse aliens direction
         bcc !B1+
-        jmp $174F
+        jmp Reverse_Alien_Direction
 
-// L06C6:
-!B0:    jmp $10B7
+!B0:    jmp End_Alien_Loop              // The Alien came in contact with the player
 
-L06C9:
-!B1:    lda Char_Y
-        bne !B2+                        //L06D0
-L06CD:  jmp $174F
+!B1:    lda Char_Y                      // Check if the Alien has reached the top of the screen
+        bne !B3+                        // If Y isn't zero keep checking
+!B2:    jmp Reverse_Alien_Direction     // If Y is 0 Alien is at top and needs to reverse direction
 
-//L06D0:
-!B2:    cmp #$14
-        beq L06CD
+!B3:    cmp #Lowest_Flr                 // Has the Alien gone into the lowest floor
+        beq !B2-                        // If yes then reverse direction
 
-        jsr Get_Char_From_Screen
+        jsr Get_Char_From_Screen        // Check the character in the position that Alien is about to enter
 
-        lda Char_To_Draw
-        cmp #Player_Shovel_Right_Top_0
-        bcs !B0-                        // L06C6
+        lda Char_To_Draw                
+        cmp #Player_Shovel_Right_Top_0  // If the character is anything higher than this we came in contact with the player
+        bcs !B0-                        // No contact so End_Alien_Loop and draw the alien in new position
 
-        cmp #Char_Alien_0
-        beq L0751
+        cmp #Char_Alien_0               // Did the Alien hit another alien, if so reverse direction
+        beq Reverse_Alien_Direction
         cmp #Char_Alien_1
-        beq L0751
-        cmp #Char_Floor
-        beq L0751
+        beq Reverse_Alien_Direction
+
+        cmp #Char_Floor                 // Did the Alien hit the floor at the bottom of a ladder, if so change direction
+        beq Reverse_Alien_Direction
         
-        jsr Check_Below
-        beq L06FA
-        cmp #Player_Shovel_Right_Top_0
-        bcs !B0-                        // L06C6
+        jsr Check_Below                 // Look at he character below the Alien
+        beq !B4+                        // If it's an empty character branch to decide what to do
 
-        cmp #Char_Alien_0
-        beq L075E
+        cmp #Player_Shovel_Right_Top_0  // If the character is anything higher than this we came in contact with the player
+        bcs !B0-                        // No contact so End_Alien_Loop and draw the alien in new position
+
+        cmp #Char_Alien_0               // Did the Alien hit another alien, if so it's OK so save Alien position and return
+        beq Save_Alien_Position
         cmp #Char_Alien_1
-        beq L075E
+        beq Save_Alien_Position
 
-L06FA:  ldx Curr_Alien
+!B4:    ldx Curr_Alien                  // Save the Aliens new position in the Alien data
         lda Char_X
         sta Alien_Data,X
         inx
         lda Char_Y
         sta Alien_Data,X
-        jsr Get_Char_From_Screen
+        jsr Get_Char_From_Screen        // Get the character in the Aliens new location
 
         lda Char_To_Draw
-        cmp #Char_Ladder_Top
-        beq L076C
+        cmp #Char_Ladder_Top            // Are we at the top of a ladder?
+        beq Alien_Top_Ladder            // If so go and handle the Alien at top of ladder, needs to pick a direction
         
-        cmp #Char_Ladder_Main
-        bne !B0+                        // L0717
+        cmp #Char_Ladder_Main           // Is the Alien still on the ladder?
+        bne !B0+                        // If not need to handle
         
-        jmp $1797
+        jmp Check_Still_on_Ladder       // If still on ladder go check if time to start moving left or right
 
-// L0717:
-!B0:    inc Char_Y
+!B0:    inc Char_Y                      // Look at the character under the Alien
         jsr Get_Char_From_Screen
         dec Char_Y
-        lda Char_To_Draw
-        cmp #Char_Blank
-        beq L0725
-        rts
 
-L0725:  ldx Curr_Alien
-        inc Char_Y
-        inx
+        lda Char_To_Draw                // Does the Alien have a blank character under it?
+        cmp #Char_Blank                 // Do we need to compare? If it's 0 can we just beq??
+        beq !B1+
+        rts                             // It's not a blank character so return
+
+// The Alien had nothing under it
+!B1:    ldx Curr_Alien                  // Get the index for the current Alien into Alien data
+        inc Char_Y                      // Make Alien fall down one character height
+        inx                             // Save the new Alien Y position
         lda Char_Y
         sta Alien_Data,X
         inx
-        lda #$FF
+        lda #$FF                        // ??
         sta Alien_Data,X
         inx
-        lda Alien_Data,X
-        and #$9F
-        ora #$20
+        lda Alien_Data,X                // Get Alien status and set it to falling??
+        and #$9F                        // Clear the two bits %10011111
+        ora #$20                        // Set the 5th bit in status %00100000
         sta Alien_Data,X
         rts
 
         inc Char_Y
         jsr Get_Char_From_Screen
         dec Char_Y
-        lda Char_To_Draw
+        lda Char_To_Draw                // Should Get_Char_From_Screen always return with the character in A??
         cmp #Char_Floor
-        bne L0751
-        jmp $17E9
+        bne !B0+                        // Branch if the character below isn't the floor. It has
+        jmp Alien_Random_Left_or_Right  // The Alien has reached floor need to pick a new direction
 
-L0751:  ldx Curr_Alien                 // Change the direction of the Alien??
+Reverse_Alien_Direction:
+!B0:    ldx Curr_Alien                 // Change the direction of the Alien??
         inx
         inx
         inx
         lda Alien_Data,X
-        eor #$0C                // Flip the direction the alien is moving?? $00 to $0C, $0C to $00, $08 to $04, $04 to $08
+        eor #$0C                       // Flip the direction the alien is moving?? $00 to $0C, $0C to $00, $08 to $04, $04 to $08
         sta Alien_Data,X
 
-L075E:  ldx Curr_Alien                 // Save the location of the current Alien now that we've moved it??
-        lda $33
+Save_Alien_Position:
+        ldx Curr_Alien                 // Save the location of the current Alien now that we've moved it
+        lda Curr_Alien_X
         sta Alien_Data,X
         inx
-        lda $34
+        lda Curr_Alien_Y
         sta Alien_Data,X
         rts
 
-L076C:  inc Char_Y                      // Look under the Alien
+Alien_Top_Ladder:
+        inc Char_Y                      // Look one character under the Alien
         jsr Get_Char_From_Screen
         dec Char_Y
 
-        lda Char_To_Draw
+        lda Char_To_Draw                // Is the Alien still on a ladder?
         cmp #Char_Ladder_Main
-        bne L07EB
+        bne Alien_Random_Left_or_Right  // If not on ladder we need to handle if it's the floor, the player or another Alien
 
-        inc Char_Y
+        inc Char_Y                      // Look two characters under the Alien
         inc Char_Y
         jsr Get_Char_From_Screen
         dec Char_Y
         dec Char_Y
         
-        lda Char_To_Draw
+        lda Char_To_Draw                // Is the Alien still on a ladder or about to reach a floor?
         cmp #Char_Ladder_Main
-        bne L07EB
+        bne Alien_Random_Left_or_Right  // If not on ladder we need to handle if it's the floor, the player or another Alien
 
-        lda VIC_RASTER_LINE             // get a random number AND with $3 (0b00000011) to limit to 0-3
+// Pick a new random direction for the Alien - This is code which could be improved A LOT! e.g. check where the player is and go after him
+        lda VIC_RASTER_LINE             // get a random number by peeking at the current raster line AND with $3 (%00000011) to limit to 0-3
         and #$03
         tax
         lda Alien_Direction,X           // use the random number from 0-3 to pick a directiom??
-        beq L076C
+        beq Alien_Top_Ladder            // if the Alien is to go up, check if at the top of the ladder
 
-        pha
-        jmp Set_Alien_Direction         // $1805
+        pha                             // Save the new direction on stack and go and chamnge the Aliens direction
+        jmp Set_Alien_Direction
 
 // Look under the alien and to either side to see if there is floor, if it's still mid-ladder not time to move left or right
-
+Check_Still_on_Ladder:
         inc Char_Y                      // Look under the Alien
         jsr Get_Char_From_Screen
         dec Char_Y
         lda Char_To_Draw
         cmp #Char_Floor
-        beq Alien_On_Floor              // L07CF  // If there is floor keep going??
+        beq Alien_On_Floor              // If there is floor keep going??
 
         dec Char_X                      // Look behind or to the left of the Alien to see if there is floor?
         inc Char_Y
@@ -1607,7 +1619,7 @@ L076C:  inc Char_Y                      // Look under the Alien
         dec Char_Y
         lda Char_To_Draw
         cmp #Char_Floor
-        bne L07EA
+        bne !B0+                        // No floor to the left so handle otherwise
         
         inc Char_X                      // Look in front or to the right of the Alien to see if there is floor?
         inc Char_Y
@@ -1616,134 +1628,133 @@ L076C:  inc Char_Y                      // Look under the Alien
         dec Char_Y
         lda Char_To_Draw
         cmp #Char_Floor
-        bne L07EA
+        bne !B0+                        // No floor to the right so handle otherwise
 
-// The Alien had floor to the left and right so now pick a random direction??
+// The Alien had floor under it to the left and right so now pick a random direction?? -- This could be improved a lot so much less random??
 
-        jsr Random_Binary       // Random number?
-        bcs L07EB
-        bcc L07FA
+        jsr Random_Binary               // Get random 0 or 1 in carry flag
+        bcs Alien_Random_Left_or_Right  // If 1 set Alien to randomly go left or right
+        bcc Alien_Random_Up_or_Down     // If 0 set Alien to randomly go up or down
 
-// L07CF:
 Alien_On_Floor:
-        jsr Random_Binary       // Random binary - get a 1 or 0 in carry
-        bcs L07EB
+        jsr Random_Binary               // Random binary - get a 1 or 0 in carry
+        bcs Alien_Random_Left_or_Right
 
         dec Char_Y
         jsr Get_Char_From_Screen
         inc Char_Y
         lda Char_To_Draw
         cmp #Char_Alien_0
-        beq L07EB
+        beq Alien_Random_Left_or_Right
         cmp #Char_Alien_1
-        beq L07EB
+        beq Alien_Random_Left_or_Right
 
         lda #Char_Blank
         pha
-        beq Set_Alien_Direction         // L0807
+        beq Set_Alien_Direction
 
-L07EA:  rts
+!B0:    rts
 
-// Does this section choose a random direction for the Alien?
-
-L07EB:
-        jsr Random_Binary       // Pick a random 0 or 1 in carry flag
-        bcs !B1+                // L07F5
+// Choose a random direction left or right for Alien
+Alien_Random_Left_or_Right:
+        jsr Random_Binary               // Pick a random 0 or 1 in carry flag
+        bcs !B1+
 
         lda #Alien_Right                // Alien new direction??
-        pha
-        bne Set_Alien_Direction         //L0807               // This always jumps because we loaded it with a non-zero value
+        pha                             // ??? change this branch to save a PHA
+        bne Set_Alien_Direction         // This always jumps because we loaded it with a non-zero value
 
-//L07F5:
 !B1:    lda #Alien_Left
-        pha
-        bne Set_Alien_Direction         //L0807               // This always jumps because we loaded it with a non-zero value
+        pha                             // ??? change this branch to save a PHA
+        bne Set_Alien_Direction         // This always jumps because we loaded it with a non-zero value
 
-L07FA:  jsr Random_Binary       // Pick a random 0 or 1 in carry flag
-        bcs L0804
+// Choose a random direction up or down for Alien
+Alien_Random_Up_or_Down:
+        jsr Random_Binary               // Pick a random 0 or 1 in carry flag
+        bcs !B0+
 
         lda #Alien_Down
         pha
-        bne Set_Alien_Direction         //L0807
+        bne Set_Alien_Direction         // This always jumps because we loaded it with a non-zero value
 
-L0804:  lda #Alien_Up
-        pha
+!B0:    lda #Alien_Up
+        pha                             // ??? For Alien_Down above we could branch to this pha to save a byte
 
-// L0807:
-// $1805
 Set_Alien_Direction:                    // The new direction is on the stack
-        ldx Curr_Alien                         // Get alien number we're currently processing
+        ldx Curr_Alien                  // Get alien number we're currently processing
         inx
         inx
         inx
-        lda Alien_Data,X
-        and #$F3
-        sta $37
-        pla
-        ora $37
+        lda Alien_Data,X                // Get the Alien status with embedded direction
+        and #$F3                        // Mask off the bottom to bits %11111100
+        sta Curr_Alien_Status
+        pla                             // Get the direction of the stack
+        ora Curr_Alien_Status           // Save the new status with the new directi0n in bottom two bits
         sta Alien_Data,X
         rts
 
-// Look up table for Alien direction
-// $1818
-
+// Look up table for Alien direction 0-3
 Alien_Direction:
         .byte Alien_Up, Alien_Right, Alien_Left, Alien_Down
 
-// $181C
+Set_Alien_Status:               // Still not clear what this routine actually does to Alien or why we came here??? Work out later.
         dex
         lda Alien_Data,X
-        tay
+        tay                     // Why do this in three instructions when we should be be able to do a subtract #1???
         dey
         tya
         sta Alien_Data,X
-        cmp #$E0
+        cmp #$E0                // Is ??
         bcc !B0+
         rts
 
-// L082D:
 !B0:    dex
         lda Alien_Data,X
-        tay
+        tay                     // Could this have been done better, seems sloppy???
         dey
         tya
         sta Alien_Data,X
         inx
         inx
-        lda Alien_Data,X
-        and #$9F
-        ora #$40
+        lda Alien_Data,X        //
+        and #$9F                // Mask off status bits %10011111
+        ora #$40                // Set %01000000 - ??
         sta Alien_Data,X
-        and #$03
-        cmp #$01
-        beq L0858
+        and #$03                // Mask off the direction bits %00000011
+        cmp #$01                // Is the Alien going in a hole? ???
+        beq !B1+
+
         tay
         dey
         tya
-        sta $38
+        sta Current_Alien_Direction
         lda Alien_Data,X
-        and #$FC
-        ora $38
+        and #$FC                        // Mask off the direction bits %11111100
+        ora Current_Alien_Direction     // or in the new direction
         sta Alien_Data,X
-L0858:  lda #Color_Green
+
+// The Alien just died so fill in the floor
+!B1:    lda #Color_Green
         sta Color_To_Draw
-        lda #$03
+        lda #Char_Floor
         sta Char_To_Draw
         jsr Draw_Char_On_Screen
+
+Just_Return:
         rts
 
-// $1861
+Get_Alien_Data:
         ldx Curr_Alien
         inx
         inx
         inx
+        rol                             // Rotate the status byte for the Alien and check bit 5
         rol
         rol
-        rol
-        bcc L086F
-        rts
+        bcc !B0+                        // If bit 5 is clear ??? Bit 5 might mean the Alien is dead so ignore in list
+        rts                             // Bit 5 was set so return
 
-L086F:  ldx Curr_Alien
+!B0:    ldx Curr_Alien
         lda Alien_Data,X
         sta Char_X
         inx
@@ -1767,7 +1778,6 @@ L086F:  ldx Curr_Alien
 //
 // Return a random binary value by reading the raster line and rotating the 3rd bit into the carry flag
 //
-// $1893
 Random_Binary:
         clc
         lda VIC_RASTER_LINE      // Read the TV raster line?
@@ -1776,7 +1786,6 @@ Random_Binary:
         lsr
         rts
 
-// $189B
 Get_Player_Input:
         jsr Read_Joystick       // Read the Joystick -- Move this subroutine here to save a few bytes - it only appears here
  
@@ -1786,24 +1795,24 @@ Get_Player_Input:
 
         lda #Player_Move_Up     // Set Player direction to Up
         sta Player_Direction
-        lda #$FD                // Pass to scan keyboard column 1 (0b11111101)
+        lda #$FD                // Pass to scan keyboard column 1 (%11111101)
         jsr Read_Keyboard
  
         lda #Player_Move_Right  // Set Player direction to Right
         sta Player_Direction
-        lda #$DF                // Pass to scan keyboard column 5 (0b11011111)
+        lda #$DF                // Pass to scan keyboard column 5 (%11011111)
         jsr Read_Keyboard
  
         lda #Player_Move_Down   // Set Player direction to Down
         sta Player_Direction
         lda #$EF
-        jsr Read_Keyboard      // Pass to scan keyboard column 4 (0b11101111)
+        jsr Read_Keyboard      // Pass to scan keyboard column 4 (%11101111)
  
         lda #Player_Move_Left  // Set Player direction to Left
-        sta Player_Direction   // Pass to keyboard column to scan 0b11101111
+        sta Player_Direction   // Pass to keyboard column to scan %11101111
         jsr Read_Keyboard
  
-        lda #$FB               // Pass to scan keyboard column 2 (0b11111011)
+        lda #$FB               // Pass to scan keyboard column 2 (%11111011)
         jsr Read_Keyboard
         sec
         rts
@@ -1819,63 +1828,63 @@ Get_Player_Input:
 
 // Lok at this for a smart way to check all bits of joystick more efficiently https://www.chibiakumas.com/6502/simplesamples.php#LessonS12
 
-// $18C7
 Read_Joystick:
-                lda VIC_VIA_1_Port_A            // read the VIC port tied to joystick
-                and #Joystick_Up_Bit            // Check for up on Joy 0 - Bit 2 - 0x00000100
-                bne Joy_Not_Up                  // Branch if it is up
-                lda #Player_Move_Up             // Return 0 for player pushing joystick up
-                beq Return_Dir
+        lda VIC_VIA_1_Port_A            // read the VIC port tied to joystick
+        and #Joystick_Up_Bit            // Check for up on Joy 0 - Bit 2 - 0x00000100
+        bne Joy_Not_Up                  // Branch if it is up
+        lda #Player_Move_Up             // Return 0 for player pushing joystick up
+        beq Return_Dir
 
-Joy_Not_Up:     lda VIC_VIA_1_Port_A            // read the joystick
-                and #Joystick_Down_Bit          // Check for Up on Joy 1 - Bit 3 - 0x00001000
-                bne Joy_Not_Down
-                lda #Player_Move_Down           // Return 2 for player pushing joystick down
-                bne Return_Dir
+Joy_Not_Up:
+        lda VIC_VIA_1_Port_A            // read the joystick
+        and #Joystick_Down_Bit          // Check for Up on Joy 1 - Bit 3 - 0x00001000
+        bne Joy_Not_Down
+        lda #Player_Move_Down           // Return 2 for player pushing joystick down
+        bne Return_Dir
 
-Joy_Not_Down:   lda VIC_VIA_1_Port_A            // read the joystick
-                and #Joystick_Left_Bit          // Check for Left on Joy 1 - Bit 4 - 0x00010000
-                bne Joy_Not_Left
-                lda #Player_Move_Left           // Return 3 for player pushing joystick left
-                bne Return_Dir
+Joy_Not_Down:
+        lda VIC_VIA_1_Port_A            // read the joystick
+        and #Joystick_Left_Bit          // Check for Left on Joy 1 - Bit 4 - 0x00010000
+        bne Joy_Not_Left
+        lda #Player_Move_Left           // Return 3 for player pushing joystick left
+        bne Return_Dir
 
-// L08EA:
-Joy_Not_Left:   lda #$7F                        // Set DDR to read, zero is read 0b01111111
-                sta VIC_VIA_2_DDR_B
-                lda VIC_VIA_2_Key_Col_Scan      // read the joystick
+Joy_Not_Left:
+        lda #$7F                        // Set DDR to read, zero is read %01111111
+        sta VIC_VIA_2_DDR_B
+        lda VIC_VIA_2_Key_Col_Scan      // read the joystick
 
-                pha                             // Push to stack to save the result of reading the joystick
-                lda #$FF                        // Set DDR back to write, not clear if this is actually needed??
-                sta VIC_VIA_2_DDR_B
-                pla                             // Retrieve the result of reading the joystick from the stack
+        pha                             // Push to stack to save the result of reading the joystick
+        lda #$FF                        // Set DDR back to write, not clear if this is actually needed??
+        sta VIC_VIA_2_DDR_B
+        pla                             // Retrieve the result of reading the joystick from the stack
 
-                and #Joystick_Right_Bit         // Check for Right on Joy 3 - Bit 7 - 0x10000000
-                bne Joy_Not_Right
+        and #Joystick_Right_Bit         // Check for Right on Joy 3 - Bit 7 - 0x10000000
+        bne Joy_Not_Right
 
-                lda #Player_Move_Right          // Return 1 for Right?
-Return_Dir:     sta Player_Direction            // Store direction of player based on Joystick 0
+        lda #Player_Move_Right          // Return 1 for Right?
+Return_Dir:
+        sta Player_Direction            // Store direction of player based on Joystick 0
 
-L0901:          pla                             // Pull the return address
+!B1:            pla                             // Pull the return address
                 pla
                 lda Player_Direction            // Load the direction and return
                 clc
-// L0906:
+
 Joy_Not_Right:  rts
 
-// $1905
 Read_Keyboard:
         sta VIC_VIA_2_Key_Col_Scan      // Write to VIC 2 Port B to select column to scan - 0 bit in A selects column
         lda VIC_VIA_2_Key_Row_Scan      // Read VIC 2 Row Scan to see what key is held down
-        and #$20                        // Check row 5 (0b00100000) - Checking for 'P' or 'E' key??
-        beq L0901
+        and #$20                        // Check row 5 (%00100000) - Checking for 'P' or 'E' key??
+        beq !B1-
         
         lda VIC_VIA_2_Key_Row_Scan      // Read VIC 2 Row Scan to see what key is held down
-        and #$02                        // Check 0b00000010 - Checking for 'W' key??
-        beq L0901                       // If it matched pop the return address and return with A = Direction
+        and #$02                        // Check %00000010 - Checking for 'W' key??
+        beq !B1-                        // If it matched pop the return address and return with A = Direction
         
         rts                             // If it didn't match return and check again
 
-// $1917??
 Decrement_Oxygen:                     // decrement the 4 digit Oxygen number on screen
         dec Screen_Oxygen_Count+3     // decrement the unit digit
         lda Screen_Oxygen_Count+3
@@ -1919,81 +1928,78 @@ Decrement_Oxygen:                     // decrement the 4 digit Oxygen number on 
         bne Still_Oxygen                    // Branch and return if any of the digits are not zero
         dex
         bne !loop-
-                                     // If we're here Oxygen has run out and the player has lost a life
-        jsr $150E
+                                        // If we're here Oxygen has run out and the player has lost a life
+        jsr Draw_Player
         
         inc Char_Y
-          
+
         lda #Char_Alien_Dead            // Draw cross above dead alien??
         sta Char_To_Draw
-        lda #$01
+        lda #Color_White
         sta Color_To_Draw
         jsr Draw_Char_On_Screen
 
-        lda #$4D                      // $22 is used as to store the indirect address of something on the screen
-        sta $22
-        lda #$1B
-        sta $23
-        jsr $1A8C
+Draw_Oxygen_Message:
+        lda #<Text_Oxygen_Out           // $22 is used as to store the indirect address of something on the screen
+        sta Temp_Index_Lo
+        lda #>Text_Oxygen_Out
+        sta Temp_Index_Hi
+        jsr Draw_Game_End_Messages
 
-        jmp $109C
+        jmp Lose_Life
 
 Still_Oxygen:
-        rts                      // Return because Oxygen hasn't reached '0000' yet
+        rts                     // Return because Oxygen hasn't reached '0000' yet
 
-
-// $1986
-Add_Score_For_Alien:    // how many floors or level of alien you killed?
-        ldy $47
-!Loop:  jsr $1995
+Add_Score_For_Alien:                    // how many floors or level of alien you killed?
+        ldy Current_Alien_Flr_Fall
+!Loop:  jsr Add_Score
         dey
         bne !Loop-
 
-        lda #$00        // This code is repeated elsewhere, we could just jump to it??
-        sta $48         // Zero the current alien level and score ready for the next alien killed
-        sta $47         // Do we have to zero both of these, won't they just get over ridden?
+        lda #$00                        // This code is repeated elsewhere, we could just jump to it??
+        sta Current_Alien_Level         // Zero the current alien level and score ready for the next alien killed
+        sta Current_Alien_Flr_Fall      // Do we have to zero both of these, won't they just get over ridden?
         rts
 
-// $1995
 Add_Score:
-        ldx $48         // Add the number in $48 to the score one digit at a time
+        ldx Current_Alien_Level         // Use the level number of the Alien you killed to increment your score. This is kind of lame if it's just 1,2,3 perhaps multiply it by 10???
 
-!Loop:  jsr Increment_Score     // Increment the score by 1
+!Loop:  jsr Increment_Score             // Increment the score by 1
         dex
         bne !Loop-
         rts
 
-// increment the score
-// $199E
+// increment the score in 100's - This might be fewer bytes as a loop??
 Increment_Score:
-        inc $1FE1         // Add 1 to score ??? digit
-        lda $1FE1         // Check if it has reached 10 so we need to increment next digit
+        inc Screen_Score+4              // Add 1 to score the hundreds digit of score
+        lda Screen_Score+4              // Check if it has reached 10 so we need to increment next thousands
         cmp #Char_9+1
         beq !B0+
         rts
 
-!B0:    lda #Char_0          // '0' the units? on screen
-        sta $1FE1
+!B0:    lda #Char_0             // '0' the hundreds on screen              If we put Char_0 in X we might be able to use that to reset to "0" in each case below
+        sta Screen_Score+4
 
-        inc $1FE0         // increment the ten's?? on screen
-        lda $1FE0         // Check if it has reached 10 so we need to increment next digit
+        inc Screen_Score+3      // increment the thousands on screen
+        lda Screen_Score+3      // Check if it has reached 10000 so we need to increment next digit
         cmp #Char_9+1
         beq !B1+
         rts
-//L09BB:
-!B1:    lda #Char_0       // '0' the ten's?? on screen
-        sta $1FE0
 
-        inc $1FDF         // increment the hundred's?? on screen
-        lda $1FDF         // Check if it has reached 10 so we need to increment next digit
+!B1:    lda #Char_0             // '0' the thousands on screen
+        sta Screen_Score+3
+
+        inc Screen_Score+2      // increment the ten thousands on screen
+        lda Screen_Score+2      // Check if it has reached 10 so we need to increment next digit
         cmp #Char_9+1
         beq !B2+
         rts
-//L09CB:
-!B2:    lda #Char_0       // '0' the hundred's?? on screen
-        sta $1FDF
 
-        inc $1FDE         // increment the thousand's?? on screen
+!B2:    lda #Char_0             // '0' the ten thousands on screen
+        sta Screen_Score+2
+
+        inc Screen_Score+1      // increment the hundred thousand's on screen
         rts
 
 //
@@ -2001,7 +2007,6 @@ Increment_Score:
 // 
 // Draw the floor characters on the screen and puts the right color behind the character
 //
-// $19D2
 Draw_Floors:
         ldx #screen_width-1          // Draw 22 characters across screen - DEFINE CONstaNT ScreenWidth
 !loop:  lda #Char_Floor              // Load floor character
@@ -2024,28 +2029,27 @@ Draw_Floors:
         bpl !loop-              // Branch back until we go negative meaning we've drawn all 16 characters of the floor across screen
         rts
 
-// $1A06
 Draw_Ladders:
         lda Current_Level       // Get the current level
-        and #$03                // Isolate the lower two bits to make it an indec from 0-3
+        and #$03                // Isolate the lower two bits to make it an index from 0-3
         clc                     // Clear so we don't rotate in a set carry flag
         asl                     // double to give us an index into the table
         tax                     // Move A to X to use as index
         lda Ladder_Layout_Lookup,X
-        sta $22
+        sta Temp_Index_Lo
         inx
         lda Ladder_Layout_Lookup,X
-        sta $23
+        sta Temp_Index_Hi
 
-        ldy #$17                // all screens have 8 ladders                           Opportunity to make the number of ladders change by level
-!B0:    lda ($22),Y             // Get the length of the ladder to draw
-        sta $26
+        ldy #$17                // all screens have 8 ladders                           Opportunity to make the number of ladders change by level???
+!B0:    lda (Temp_Index_Lo),Y             // Get the length of the ladder to draw
+        sta Ladder_Length
         dey
-        lda ($22),Y             // Get the screen high address of the start of the ladder
-        sta $25
+        lda (Temp_Index_Lo),Y             // Get the screen high address of the start of the ladder
+        sta Ladder_Start_Hi_Addr
         dey
-        lda ($22),Y             // Get the screen low address of the start of the ladder
-        sta $24
+        lda (Temp_Index_Lo),Y             // Get the screen low address of the start of the ladder
+        sta Ladder_Start_Lo_Addr
         tya                     // Save Y
         pha                     
         jsr Draw_Ladder
@@ -2055,74 +2059,72 @@ Draw_Ladders:
         bpl !B0-                // Draw the next ladder
         rts
 
-// $1A33
 Draw_Ladder:
-        lda $24               // Determine address in color map based on address in video
-        sta $39
-        lda $25
+        lda Ladder_Start_Lo_Addr                // Determine address in color map based on address in video
+        sta Ladder_Start_Col_Lo_Addr
+        lda Ladder_Start_Hi_Addr
         clc
-        adc #$78              // Adding $78 is offset from $1E00 start address of video memory to $9600 color memory
-        sta $3A
+        adc #$78                                // Adding $78 is offset from $1E00 start address of video memory to $9600 color memory
+        sta Ladder_Start_Col_Hi_Addr
 
         lda #Char_Ladder_Top    // Draw top of ladder??
         ldy #$00
-        sta ($24),Y
+        sta (Ladder_Start_Lo_Addr),Y
         lda #Color_White
-        sta ($39),Y
+        sta (Ladder_Start_Col_Lo_Addr),Y
 
 !loop:  jsr Next_Line_Down      // Move pointers down one line in video and color memory and draw bottom half of player
         
         lda #Char_Ladder_Main   // Draw Ladder character in white, takes advantage that character and color are both $1
-        sta ($24),Y
-        sta ($39),Y
-        dec $26                 // Decrement length of ladder count and if unfinished loop and draw another ladder char
-        lda $26                 // Do we have to load or does DEC set the zero flag??
+        sta (Ladder_Start_Lo_Addr),Y
+        sta (Ladder_Start_Col_Lo_Addr),Y
+        dec Ladder_Length                 // Decrement length of ladder count and if unfinished loop and draw another ladder char
+        lda Ladder_Length                 // Do we have to load or does DEC set the zero flag??
         bne !loop-
 
         rts
 
-// $1A58
 Next_Line_Down:
-          clc                   // Add Screen Width to low address in video memory to point to next line down
-          lda #screen_width
-          adc $24
-          sta $24
-          lda #$00              // Add carry flag if we went over $FF in low address
-          adc $25
-          sta $25
+        clc                           // Add Screen Width to low address in video memory to point to next line down
+        lda #screen_width
+        adc Ladder_Start_Lo_Addr
+        sta Ladder_Start_Lo_Addr
+        lda #$00                      // Add carry flag if we went over $FF in low address
+        adc Ladder_Start_Hi_Addr
+        sta Ladder_Start_Hi_Addr
 
-          clc                   // Add Screen Width to low address in color memory to point to next line down
-          lda #screen_width
-          adc $39
-          sta $39
-          lda #$00              // Add carry flag if we went over $FF in low address
-          adc $3A
-          sta $3A
-          rts
+        clc                           // Add Screen Width to low address in color memory to point to next line down
+        lda #screen_width
+        adc Ladder_Start_Col_Lo_Addr
+        sta Ladder_Start_Col_Lo_Addr
+        lda #$00                      // Add carry flag if we went over $FF in low address
+        adc Ladder_Start_Col_Hi_Addr
+        sta Ladder_Start_Col_Hi_Addr
+        rts
 
-// $1A73??
 Draw_Game_Start_Message:
-        lda #$21                // Set ($22) to point at text to start game
-        sta $22
-        lda #$1B
-        sta $23
+        lda #<Text_Start_Msg                // Set ($22) to point at text to start game at originally $1B21
+        sta Temp_Index_Lo
+        lda #>Text_Start_Msg
+        sta Temp_Index_Hi
+
 !loop:  jsr Draw_Message
         jsr Check_F7            // Check for 'F7' key to start game -- Could put the code in line and save a few bytes because it's only used once
         bcc !loop-              // No F7 so keep waiting and flashing message
 
         rts
 
-// $1A84
 Draw_Game_Over_Message:
-        lda #$37                // Set ($22) to point at text GAME OVER
-        sta $22
-        lda #$1B
-        sta $23
+        lda #<Text_Game_Over_Msg                // Set ($22) to point at text GAME OVER
+        sta Temp_Index_Lo
+        lda #>Text_Game_Over_Msg
+        sta Temp_Index_Hi
 
+Draw_Game_End_Messages:
         ldx #$08               // Show text 8 times
 !loop:  txa
         pha
-        jsr Draw_Message        // Draw message that is pointed to by ($22)
+        jsr Draw_Message        // Draw message that is pointed to by Temp_Index_Lo ($22)
         pla
         tax
         dex
@@ -2140,15 +2142,15 @@ Draw_Message:
         pha
         lda Color_Line_11,Y
         pha
-        lda ($22),Y             // Draw the text in White on the screen
+        lda (Temp_Index_Lo),Y             // Draw the text in White on the screen
         sta Screen_Line_11,Y
         lda #Color_White
         sta Color_Line_11,Y
         dey
         bpl !loop-
 
-        jsr $1D36               // Two delays
-        jsr $1D36
+        jsr Safe_Delay                  //Two delays
+        jsr Safe_Delay
           
         ldy #$00              // Pull the characters and color back off the stack and draw on screen
 !loop:  pla
@@ -2157,8 +2159,9 @@ Draw_Message:
         sta Screen_Line_11,Y
         iny
         cpy #screen_width
-L0AC5:  bne !loop-
-        jsr $1D36
+
+        bne !loop-
+        jsr Safe_Delay
         rts
 
 //
@@ -2169,10 +2172,8 @@ L0AC5:  bne !loop-
 // ($2D)- Indirect address on screen for character to appear
 // 
 
-// $1AC9
 Draw_Char_On_Screen:
         jsr Get_Char_Screen_Adr
-// $1ACC
         lda Char_To_Draw         // Get the character to draw in screen
         ldy #$00        // Suspect self-modifying code??
         sta (Char_Screen_Adr_Lo),Y
@@ -2191,67 +2192,61 @@ Draw_Char_On_Screen:
 // $2C  - Color of character to draw
 // ($2D)- Indirect address on screen for character to appear
 // 
-// $1ADE
 Get_Char_From_Screen:
           jsr Get_Char_Screen_Adr       // Get the address in video memory of the character at X,Y
 
           ldy #$00                      // Get the character that will be in the background
-          lda (Char_Screen_Adr_Lo),Y                   // Save it in $2B
-          sta $2B
+          lda (Char_Screen_Adr_Lo),Y
+          sta Char_To_Draw
           clc
           lda #$78                      // Add $78 to the high address address to get the address in color space
           adc Char_Screen_Adr_Hi
           sta Char_Screen_Adr_Hi
-          lda (Char_Screen_Adr_Lo),Y                   // Get the character color and save it
+          lda (Char_Screen_Adr_Lo),Y    // Get the character color and save it
           sta Color_To_Draw
           rts
 
 // Index to start of each screen line in memory - 23 lines
 
-// $1AF3
 Screen_Line_Address_Lo:
         .byte $00,$16,$2C,$42,$58,$6E,$84,$9A,$B0,$C6,$DC,$F2,$08,$1E,$34,$4A,$60,$76,$8C,$A2,$B8,$CE,$E4
-// $1B0A
 Screen_Line_Address_Hi:
         .byte $1E,$1E,$1E,$1E,$1E,$1E,$1E,$1E,$1E,$1E,$1E,$1E,$1F,$1F,$1F,$1F,$1F,$1F,$1F,$1F,$1F,$1F,$1F
 
 //
-// Could overlap the $00 at the ends of each screen to save memory
+// Could overlap the $00 at the ends of each screen to save memory??
 //
 
-// $1B21
 Text_Start_Msg:
 // __TYPE_'F7'_TO_START__
         .byte $00,$00,$94,$99,$90,$85,$00,$A7,$86,$B7,$A7,$00,$94,$8F,$00,$93,$94,$81,$92,$94,$00,$00
 
-// $1B37
 Text_Game_Over_Msg:
 // ______GAME__OVER______
         .byte $00,$00,$00,$00,$00,$00,$87,$81,$8D,$85,$00,$00,$8F,$96,$85,$92,$00,$00,$00,$00,$00,$00
 
-// $1B4D
 // _____OXYGEN_OUT_______
 Text_Oxygen_Out:
         .byte $00,$00,$00,$00,$00,$8F,$98,$99,$87,$85,$8E,$00,$8F,$95,$94,$00,$00,$00,$00,$00,$00,$00
 
-// $1B63
         .byte $00
 
-// $1B64        // Alien level and score for each as they level up? Might also be color?
-        .byte $00,$03,$02,$01
+// Alien level and score for each as they level up? Also represents Alien Color         Do we actually need the first 0??
+Alien_Level:
+        .byte Color_Black,Color_Cyan,Color_Red,Color_White
 
 // Index to each entry in the level ladder layout
-
-// $1B68
 Ladder_Layout_Lookup:
-        .byte $70,$1B
-        .byte $88,$1B
-        .byte $A0,$1B
-        .byte $B8,$1B
+        .byte <Ladder_Layout_0, >Ladder_Layout_0        // $70,$1B
+        .byte <Ladder_Layout_1, >Ladder_Layout_1        // $88,$1B
+        .byte <Ladder_Layout_2, >Ladder_Layout_2        // $A0,$1B
+        .byte <Ladder_Layout_3, >Ladder_Layout_3        // $B8,$1B
 
 // Screen address and line length for ladder
 
-// $1B70
+// Create a look up table so that the levels can have a different number of ladders??? What about random at higher levels???
+
+Ladder_Layout_0:
         .byte   $18,$1E,$03
         .byte   $9C,$1E,$03
         .byte   $20,$1F,$03
@@ -2261,8 +2256,7 @@ Ladder_Layout_Lookup:
         .byte   $AB,$1E,$03
         .byte   $2A,$1E,$12
 
-// $1B88
-
+Ladder_Layout_1:
         .byte   $17,$1E,$12
         .byte   $1C,$1E,$06
         .byte   $24,$1F,$03
@@ -2272,8 +2266,7 @@ Ladder_Layout_Lookup:
         .byte   $2A,$1E,$06
         .byte   $A4,$1E,$03
 
-// $1BA0
-
+Ladder_Layout_2:
         .byte   $18,$1E,$09
         .byte   $62,$1F,$03
         .byte   $A0,$1E,$03
@@ -2284,9 +2277,7 @@ Ladder_Layout_Lookup:
         .byte   $32,$1F,$06
 
 // First screen in game?
-
-// $1BB8
-
+Ladder_Layout_3:
         .byte   $59,$1E,$03
         .byte   $1F,$1F,$06
         .byte   $1C,$1E,$12
@@ -2300,326 +2291,314 @@ Ladder_Layout_Lookup:
 // _XXX_______SCORE000000
 // OXYGEN2000__HIGH000000
 // 
-// $1BD0
+Dash_Text:
         .byte $00,$0A,$0A,$0A,$00,$00,$00,$00,$00,$00,$00,$93,$83,$8F,$92,$85,$B0,$B0,$B0,$B0,$B0,$B0
         .byte $8F,$98,$99,$87,$85,$8E,$B2,$B0,$B0,$B0,$00,$00,$88,$89,$87,$88,$B0,$B0,$B0,$B0,$B0,$B0
-
-// $1BFC
-
-        .byte $11,$20
-        .byte $DE,$1A
 
 //
 // Character Bitmap data
 //
-// Must fall at $1C00. VIC_Char_Mem register is set to find character map at $1C00
+// Must fall at $1C00. VIC_Char_Mem register is set to find character map at $1C00 ???
 
-// A = 1010
-// B = 1011
-// C = 1100
-// D = 1101
-// E = 1110
-// F = 1111
+        * = $1C00 "Charmap"
 
 Char_Mem:
-        .byte $00,$00,$00,$00,$00,$00,$00,$00   // 00 - Blank
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-        .byte $FF,$81,$FF,$81,$FF,$81,$FF,$81   // 01 - Ladder Main
-//      11111111        [████████]
-//      10000001        [█      █]
-//      11111111        [████████]
-//      10000001        [█      █]
-//      11111111        [████████]
-//      10000001        [█      █]
-//      11111111        [████████]
-//      10000001        [█      █]
-        .byte $00,$00,$00,$81,$FF,$81,$FF,$81   // 02 - Ladder Top
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      10000001        [█      █]
-//      11111111        [████████]
-//      10000001        [█      █]
-//      11111111        [████████]
-//      10000001        [█      █]
-        .byte $FB,$FB,$00,$DF,$DF,$00,$00,$00   // 03 - Floor
-//      11111011        [█████ ██]
-//      11111011        [█████ ██]
-//      00000000        [        ]
-//      11011111        [██ █████]
-//      11011111        [██ █████]
-//      00000000        [        ]
-//      00000000        [        ]
-        .byte $81,$E5,$00,$DF,$DF,$00,$00,$00   // 04 - Floor Dug 1
-//      10000001        [█      █]
-//      11100101        [███  █ █]
-//      00000000        [        ]
-//      11011111        [██ █████]
-//      11011111        [██ █████]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-        .byte $00,$C1,$00,$DF,$DF,$00,$00,$00   // 05 - Floor Dug 2
-//      00000000        [        ]
-//      11000001        [██     █]
-//      00000000        [        ]
-//      11011111        [██ █████]
-//      11011111        [██ █████]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-        .byte $00,$00,$00,$81,$DF,$00,$00,$00   // 06 - Floor Dug 3
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      10000001        [█      █]
-//      11011111        [██ █████]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-        .byte $00,$00,$00,$00,$83,$00,$00,$00   // 07 - Floor Dug 4
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      10000011        [█     ██]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-        .byte $E6,$19,$3C,$5A,$81,$FF,$DD,$99   // 08 Alien Frame 0
-//      11100110        [███  ██ ]
-//      00011001        [   ██  █]
-//      00111100        [  ████  ]
-//      01011010        [ █ ██ █ ]
-//      10000001        [█      █]
-//      11111111        [████████]
-//      11011101        [██ ███ █]
-//      10011001        [█  ██  █]
-        .byte $67,$98,$3C,$5A,$A5,$FF,$BB,$99   // 09 Alien Frame 1
-//      01100111        [ ██  ███]
-//      10011000        [█  ██   ]
-//      00111100        [  ████  ]
-//      01011010        [ █ ██ █ ]
-//      10100101        [█ █  █ █]
-//      11111111        [████████]
-//      10111011        [█ ███ ██]
-//      10011001        [█  ██  █]
-        .byte $99,$5A,$3C,$18,$18,$24,$24,$24   // 0A Player Life Counter
-//      10011001        [█  ██  █]
-//      01011010        [ █ ██ █ ]
-//      00111100        [  ████  ]
-//      00011000        [   ██   ]
-//      00100100        [  █  █  ]
-//      00100100        [  █  █  ]
-//      00100100        [  █  █  ]
-//      00100100        [  █  █  ]
-        .byte $00,$00,$00,$00,$60,$F0,$F0,$60   // 0B Player Shovel Right Top 0
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      01100000        [ ██     ]
-//      11110000        [████    ]
-//      11110000        [████    ]
-//      01100000        [ ██     ]
-        .byte $F0,$F8,$68,$64,$94,$96,$93,$D3   // 0C Player Shovel Right Bottom 0
-//      11110000        [████    ]
-//      11111000        [█████   ]
-//      01101000        [ ██ █   ]
-//      01100100        [ ██  █  ]
-//      10010100        [█  █ █  ]
-//      10010110        [█  █ ██ ]
-//      10010011        [█  █  ██]
-//      11010011        [██ █  ██]
-        .byte $00,$00,$00,$00,$06,$0F,$0F,$06   // 0D Player Shovel Left Top 0
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000110        [     ██ ]
-//      00001111        [    ████]
-//      00001111        [    ████]
-//      00000110        [     ██ ]
-        .byte $0F,$1F,$16,$26,$29,$69,$C9,$DB   // 0E Player Shovel Left Bottom 0
-//      00001111        [    ████]
-//      00011111        [   █████]
-//      00010110        [   █ ██ ]
-//      00100110        [  █  ██ ]
-//      00101001        [  █ █  █]
-//      01101001        [ ██ █  █]
-//      11001001        [██  █  █]
-//      11011011        [██ ██ ██]
-        .byte $00,$00,$03,$03,$66,$F4,$F4,$68   // 0F Player Shovel Right Top 0
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000011        [      ██]
-//      00000011        [      ██]
-//      01100110        [ ██  ██ ]
-//      11110100        [████ █  ]
-//      11110100        [████ █  ]
-//      01101000        [ ██ █   ]
-        .byte $F8,$F0,$60,$60,$90,$90,$90,$D8   // 10 Player Shovel Right Bottom 0
-//      11111000        [█████   ]
-//      11110000        [████    ]
-//      01100000        [ ██     ]
-//      01100000        [ ██     ]
-//      10010000        [█  █    ]
-//      10010000        [█  █    ]
-//      10010000        [█  █    ]
-//      11011000        [██ ██   ]
-        .byte $00,$00,$C0,$C0,$66,$2F,$2F,$16   // 11 Player Shovel Left Top 1
-//      00000000        [        ]
-//      00000000        [        ]
-//      01100000        [ ██     ]
-//      01100000        [ ██     ]
-//      01100110        [ ██  ██ ]
-//      00101111        [ █  ████]
-//      00101111        [ █  ████]
-//      00010110        [ █   ██ ]
-        .byte $1F,$0F,$06,$06,$09,$09,$09,$1B   // 12 Player Shovel Left Bottom 1
-//      00011111        [   █████]
-//      00001111        [    ████]
-//      00000110        [     ██ ]
-//      00000110        [     ██ ]
-//      00001001        [    █  █]
-//      00001001        [    █  █]
-//      00001001        [    █  █]
-//      00010111        [   █ ███]
-        .byte $00,$00,$00,$00,$18,$3C,$3C,$98   // 13 Player Climb Top 0
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      10001000        [█   █   ]
-//      00111100        [  ████  ]
-//      00111100        [  ████  ]
-//      10011000        [█  ██   ]
-        .byte $FF,$19,$18,$18,$64,$44,$C4,$06   // 14 Player Climb Bottom 0
-//      11111111        [████████]
-//      00011001        [   ██  █]
-//      00011000        [   ██   ]
-//      00011000        [   ██   ]
-//      01100100        [ ██  █  ]
-//      01000100        [ █   █  ]
-//      11000100        [██   █  ]
-//      00000110        [     ██ ]
-        .byte $00,$00,$00,$00,$18,$3C,$3C,$19   // 15 Player Climb Top 1
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00011000        [   ██   ]
-//      00111100        [  ████  ]
-//      00111100        [  ████  ]
-//      00011001        [   ██  █]
-        .byte $FF,$98,$18,$18,$26,$22,$23,$60   // 16 Player Climb Bottom 1
-//      11111111        [████████]
-//      10011000        [█  ██   ]
-//      00011000        [   ██   ]
-//      00011000        [   ██   ]
-//      00100110        [  █  ██ ]
-//      00100010        [  █   █ ]
-//      00100011        [  █   ██]
-//      01100000        [ █     ]
-        .byte $FF,$19,$18,$18,$24,$27,$21,$60   // 17 Player Run Left Bottom 0
-//      11111111        [████████]
-//      00011001        [   ██  █]
-//      00011000        [   ██   ]
-//      00011000        [   ██   ]
-//      00100100        [  █  █  ]
-//      00100111        [  █  ███]
-//      00100001        [  █    █]
-//      01100000        [ ██     ]
-        .byte $00,$00,$00,$00,$18,$3C,$3C,$18   // 18 Player Run Top 0
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      00011000        [   ██   ]
-//      00111100        [  ████  ]
-//      00111100        [  ████  ]
-//      00011000        [   ██   ]
-        .byte $AC,$5A,$1C,$18,$64,$44,$C4,$0C   // 19 Player Run Left Bottom 1
-//      10101100        [█ █ ██  ]
-//      01011010        [ █ ██ █ ]
-//      00011100        [   ███  ]
-//      00011000        [   ██   ]
-//      01100100        [ ██  █  ]
-//      01000100        [ █   █  ]
-//      11000100        [██   █  ]
-//      00001100        [    ██  ]
-        .byte $FF,$98,$18,$18,$24,$E4,$84,$06   // 1A Player Run Right Bottom 0
-//      11111111        [████████]
-//      10011000        [█  ██   ]
-//      00011000        [   ██   ]
-//      00011000        [   ██   ]
-//      00100100        [  █  █  ]
-//      11100100        [███  █  ]
-//      10000100        [█    █  ]
-//      00000110        [     ██ ]
-        .byte $3D,$5A,$38,$18,$26,$22,$23,$30   // 1B Player Run Right Bottom 1
-//      00111101        [  ████ █]
-//      01011010        [ █ ██ █ ]
-//      00111000        [  ███   ]
-//      00011000        [   ██   ]
-//      00100110        [  █  ██ ]
-//      00100010        [  █   █ ]
-//      00100011        [  █   ██]
-//      00110000        [  ██    ]
-        .byte $00,$00,$00,$66,$99,$3C,$5A,$A5   // 1C Alien in Hole
-//      00000000        [        ]
-//      00000000        [        ]
-//      00000000        [        ]
-//      01100110        [ ██  ██ ]
-//      10011001        [█  ██  █]
-//      00111100        [  ████  ]
-//      01011010        [ █ ██ █ ]
-//      10100101        [█ █  █ █]
-        .byte $18,$18,$FF,$18,$18,$18,$18,$18   // 1D Alien Dead
-//      00011000        [   ██   ]
-//      00011000        [   ██   ]
-//      11111111        [████████]
-//      00011000        [   ██   ]
-//      00011000        [   ██   ]
-//      00011000        [   ██   ]
-//      00011000        [   ██   ]
-//      00011000        [   ██   ]
+        .byte %00000000 // [        ]           00 - Blank
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+
+        .byte %11111111 // [████████]           01 - Ladder Main
+        .byte %10000001 // [█      █]
+        .byte %11111111 // [████████]
+        .byte %10000001 // [█      █]
+        .byte %11111111 // [████████]
+        .byte %10000001 // [█      █]
+        .byte %11111111 // [████████]
+        .byte %10000001 // [█      █]
+
+        .byte %00000000 // [        ]           02 - Ladder Top
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %10000001 // [█      █]
+        .byte %11111111 // [████████]
+        .byte %10000001 // [█      █]
+        .byte %11111111 // [████████]
+        .byte %10000001 // [█      █]
+
+        .byte %11111011 // [█████ ██]           03 - Floor
+        .byte %11111011 // [█████ ██]
+        .byte %00000000 // [        ]
+        .byte %11011111 // [██ █████]
+        .byte %11011111 // [██ █████]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+
+        .byte %10000001 // [█      █]           04 - Floor Dug 1
+        .byte %11100101 // [███  █ █]
+        .byte %00000000 // [        ]
+        .byte %11011111 // [██ █████]
+        .byte %11011111 // [██ █████]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+
+        .byte %00000000 // [        ]           05 - Floor Dug 2
+        .byte %11000001 // [██     █]
+        .byte %00000000 // [        ]
+        .byte %11011111 // [██ █████]
+        .byte %11011111 // [██ █████]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+
+        .byte %00000000 // [        ]           06 - Floor Dug 3
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %10000001 // [█      █]
+        .byte %11011111 // [██ █████]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+
+        .byte %00000000 // [        ]           07 - Floor Dug 4
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %10000011 // [█     ██]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+
+        .byte %11100110 // [███  ██ ]           08 Alien Frame 0
+        .byte %00011001 // [   ██  █]
+        .byte %00111100 // [  ████  ]
+        .byte %01011010 // [ █ ██ █ ]
+        .byte %10000001 // [█      █]
+        .byte %11111111 // [████████]
+        .byte %11011101 // [██ ███ █]
+        .byte %10011001 // [█  ██  █]
+
+        .byte %01100111 // [ ██  ███]           09 Alien Frame 1
+        .byte %10011000 // [█  ██   ]
+        .byte %00111100 // [  ████  ]
+        .byte %01011010 // [ █ ██ █ ]
+        .byte %10100101 // [█ █  █ █]
+        .byte %11111111 // [████████]
+        .byte %10111011 // [█ ███ ██]
+        .byte %10011001 // [█  ██  █]
+
+        .byte %10011001 // [█  ██  █]           0A Player Life Counter
+        .byte %01011010 // [ █ ██ █ ]
+        .byte %00111100 // [  ████  ]
+        .byte %00011000 // [   ██   ]
+        .byte %00100100 // [  █  █  ]
+        .byte %00100100 // [  █  █  ]
+        .byte %00100100 // [  █  █  ]
+        .byte %00100100 // [  █  █  ]
+
+        .byte %00000000 // [        ]           0B Player Shovel Right Top 0
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %01100000 // [ ██     ]
+        .byte %11110000 // [████    ]
+        .byte %11110000 // [████    ]
+        .byte %01100000 // [ ██     ]
+
+        .byte %11110000 // [████    ]           0C Player Shovel Right Bottom 0
+        .byte %11111000 // [█████   ]
+        .byte %01101000 // [ ██ █   ]
+        .byte %01100100 // [ ██  █  ]
+        .byte %10010100 // [█  █ █  ]
+        .byte %10010110 // [█  █ ██ ]
+        .byte %10010011 // [█  █  ██]
+        .byte %11010011 // [██ █  ██]
+
+        .byte %00000000 // [        ]           0D Player Shovel Left Top 0
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000110 // [     ██ ]
+        .byte %00001111 // [    ████]
+        .byte %00001111 // [    ████]
+        .byte %00000110 // [     ██ ]
+
+        .byte %00001111 // [    ████]           0E Player Shovel Left Bottom 0
+        .byte %00011111 // [   █████]
+        .byte %00010110 // [   █ ██ ]
+        .byte %00100110 // [  █  ██ ]
+        .byte %00101001 // [  █ █  █]
+        .byte %01101001 // [ ██ █  █]
+        .byte %11001001 // [██  █  █]
+        .byte %11011011 // [██ ██ ██]
+
+        .byte %00000000 // [        ]           0F Player Shovel Right Top 0
+        .byte %00000000 // [        ]
+        .byte %00000011 // [      ██]
+        .byte %00000011 // [      ██]
+        .byte %01100110 // [ ██  ██ ]
+        .byte %11110100 // [████ █  ]
+        .byte %11110100 // [████ █  ]
+        .byte %01101000 // [ ██ █   ]
+
+        .byte %11111000 // [█████   ]           10 Player Shovel Right Bottom 0
+        .byte %11110000 // [████    ]
+        .byte %01100000 // [ ██     ]
+        .byte %01100000 // [ ██     ]
+        .byte %10010000 // [█  █    ]
+        .byte %10010000 // [█  █    ]
+        .byte %10010000 // [█  █    ]
+        .byte %11011000 // [██ ██   ]
+
+        .byte %00000000 // [        ]           11 Player Shovel Left Top 1
+        .byte %00000000 // [        ]
+        .byte %01100000 // [ ██     ]
+        .byte %01100000 // [ ██     ]
+        .byte %01100110 // [ ██  ██ ]
+        .byte %00101111 // [ █  ████]
+        .byte %00101111 // [ █  ████]
+        .byte %00010110 // [ █   ██ ]
+
+        .byte %00011111 // [   █████]           12 Player Shovel Left Bottom 1
+        .byte %00001111 // [    ████]
+        .byte %00000110 // [     ██ ]
+        .byte %00000110 // [     ██ ]
+        .byte %00001001 // [    █  █]
+        .byte %00001001 // [    █  █]
+        .byte %00001001 // [    █  █]
+        .byte %00010111 // [   █ ███]
+
+        .byte %00000000 // [        ]           13 Player Climb Top 0
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00011000 // [   ██   ]
+        .byte %00111100 // [  ████  ]
+        .byte %00111100 // [  ████  ]
+        .byte %10011000 // [█  ██   ]
+
+        .byte %11111111 // [████████]           14 Player Climb Bottom 0
+        .byte %00011001 // [   ██  █]
+        .byte %00011000 // [   ██   ]
+        .byte %00011000 // [   ██   ]
+        .byte %01100100 // [ ██  █  ]
+        .byte %01000100 // [ █   █  ]
+        .byte %11000100 // [██   █  ]
+        .byte %00000110 // [     ██ ]
+
+        .byte %00000000 // [        ]           15 Player Climb Top 1
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00011000 // [   ██   ]
+        .byte %00111100 // [  ████  ]
+        .byte %00111100 // [  ████  ]
+        .byte %00011001 // [   ██  █]
+
+        .byte %11111111 // [████████]           16 Player Climb Bottom 1
+        .byte %10011000 // [█  ██   ]
+        .byte %00011000 // [   ██   ]
+        .byte %00011000 // [   ██   ]
+        .byte %00100110 // [  █  ██ ]
+        .byte %00100010 // [  █   █ ]
+        .byte %00100011 // [  █   ██]
+        .byte %01100000 // [ █     ]
+
+        .byte %11111111 // [████████]           17 Player Run Left Bottom 0
+        .byte %00011001 // [   ██  █]
+        .byte %00011000 // [   ██   ]
+        .byte %00011000 // [   ██   ]
+        .byte %00100100 // [  █  █  ]
+        .byte %00100111 // [  █  ███]
+        .byte %00100001 // [  █    █]
+        .byte %01100000 // [ ██     ]
+
+        .byte %00000000 // [        ]           18 Player Run Top 0
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %00011000 // [   ██   ]
+        .byte %00111100 // [  ████  ]
+        .byte %00111100 // [  ████  ]
+        .byte %00011000 // [   ██   ]
+
+        .byte %10101100 // [█ █ ██  ]           19 Player Run Left Bottom 1
+        .byte %01011010 // [ █ ██ █ ]
+        .byte %00011100 // [   ███  ]
+        .byte %00011000 // [   ██   ]
+        .byte %01100100 // [ ██  █  ]
+        .byte %01000100 // [ █   █  ]
+        .byte %11000100 // [██   █  ]
+        .byte %00001100 // [    ██  ]
+
+        .byte %11111111 // [████████]           1A Player Run Right Bottom 0
+        .byte %10011000 // [█  ██   ]
+        .byte %00011000 // [   ██   ]
+        .byte %00011000 // [   ██   ]
+        .byte %00100100 // [  █  █  ]
+        .byte %11100100 // [███  █  ]
+        .byte %10000100 // [█    █  ]
+        .byte %00000110 // [     ██ ]
+
+        .byte %00111101 // [  ████ █]           1B Player Run Right Bottom 1
+        .byte %01011010 // [ █ ██ █ ]
+        .byte %00111000 // [  ███   ]
+        .byte %00011000 // [   ██   ]
+        .byte %00100110 // [  █  ██ ]
+        .byte %00100010 // [  █   █ ]
+        .byte %00100011 // [  █   ██]
+        .byte %00110000 // [  ██    ]
+
+        .byte %00000000 // [        ]           1C Alien in Hole
+        .byte %00000000 // [        ]
+        .byte %00000000 // [        ]
+        .byte %01100110 // [ ██  ██ ]
+        .byte %10011001 // [█  ██  █]
+        .byte %00111100 // [  ████  ]
+        .byte %01011010 // [ █ ██ █ ]
+        .byte %10100101 // [█ █  █ █]
+
+        .byte %00011000 // [   ██   ]           1D Alien Dead        - It's not clear if this is ever used???
+        .byte %00011000 // [   ██   ]
+        .byte %11111111 // [████████]
+        .byte %00011000 // [   ██   ]
+        .byte %00011000 // [   ██   ]
+        .byte %00011000 // [   ██   ]
+        .byte %00011000 // [   ██   ]
+        .byte %00011000 // [   ██   ]
+
+  // Eventually remove this code because we may not need it to write a tape image???
 
 // Memory $1CF4
-                        // Call Membot - Set the bottom of memory to $1000
-          ldx #$00      // X = Lower half of address $00
-          ldy #$10      // Y = Lower half of address $10
-          clc           // Clear carry to tell Membot to set bottom of memory
-          jsr $FF9C     // Call Membot
+//                        // Call Membot - Set the bottom of memory to $1000
+//          ldx #$00      // X = Lower half of address $00
+//          ldy #$10      // Y = Lower half of address $10
+//          clc           // Clear carry to tell Membot to set bottom of memory
+//          jsr $FF9C     // Call Membot
 
-                        // Call SETLFS
-          ldx #$01      // Set for device #1 - Tape
-          jsr $FFBA
+//                        // Call SETLFS
+//          ldx #$01      // Set for device #1 - Tape
+//          jsr $FFBA
 
-                        // Set file name
-          lda #$00      // Set file name length to zero
-          jsr $FFBD     // Call SETNAM
+//                        // Set file name
+//          lda #$00      // Set file name length to zero
+//          jsr $FFBD     // Call SETNAM
 
-                        // Save memory to tape?
-          ldx #$00      // X = Lower half of address $00
-          ldy #$1E      // Y = Lower half of address $1E
-          lda #$2B
-          jsr $FFD8     // Call SAVE
+//                        // Save memory to tape?
+//          ldx #$00      // X = Lower half of address $00
+//          ldy #$1E      // Y = Lower half of address $1E
+//          lda #$2B
+//          jsr $FFD8     // Call SAVE
 
-          brk
+//          brk
 //
 // Compare Score to High Score
-//
-// Compare each digit
-//
-// $1D0C
 Comp_High_Score:
                 ldx #$01
 !loop:          lda Screen_Score,X
@@ -2641,11 +2620,10 @@ Not_Hi_Score:   rts
 //
 // Delay for X loops with X in $21
 //
-// $1D2B                        // It's not clear if this is ever called??
-Delay_By_Var:
-        ldx $21
-// L0D2F:
-// $1D2D
+//                         // It's not clear if this is ever called???
+// Delay_By_Var:
+//        ldx Delay_Amount
+
 Delay_By_X:                     // Delay by looping based on the value in X
 !loop0:
         ldy #$FF
@@ -2689,7 +2667,6 @@ Clear_Screen:   ldx #$00
 // Check_Below - Get the Character that is below the character at Char_X, Char_Y and return in A
 //
 
-// $1D5A
 Check_Below:
         inc Char_Y                      // Increment Y
         jsr Get_Char_From_Screen        // Get the character
@@ -2700,21 +2677,20 @@ Check_Below:
 //
 // Check for F7 key??
 //
-// $1D64
 Check_F7:
         lda VIC_VIA_1_Port_A            // Check fire button on joystick??
         and #$20                        // If pressed branch and return with carry set to start game
         beq !B0+
 
-        lda #$7F                        // 0b01111111 Select the column
+        lda #$7F                        // %01111111 Select the column
         sta VIC_VIA_2_Key_Col_Scan
         lda VIC_VIA_2_Key_Row_Scan                      // Read the keyboard row
         and #$80                        // to check for 'F7'
         bne !B1+
-// $1D79??
+
 !B0:    sec                        // Return with carry set to start game
         rts
-// $1D7B??
+
 !B1:    clc                        // Return with carry clear 'F7' or joystick fire button where not pressed
         rts
 
@@ -2725,9 +2701,8 @@ Check_F7:
 // $2A  - Y co-ord of character
 // ($2D)- Screen address created based on character X and Y
 //
-// $1D7B
 Get_Char_Screen_Adr:
-        ldy Char_Y                         // Get Y co-ordinate as line number of character on screen
+        ldy Char_Y                      // Get Y co-ordinate as line number of character on screen
         lda Screen_Line_Address_Lo,Y    // Look up the lower and upper address of end of line from table and create index at $2D
         sta Char_Screen_Adr_Lo
         lda Screen_Line_Address_Hi,Y
@@ -2741,14 +2716,13 @@ Get_Char_Screen_Adr:
         sta Char_Screen_Adr_Hi
         rts
 
-//$1D95
+Delay_Then_Return:
         ldx #$80
         jsr Delay_By_X
         rts
 
-// $1D9B
 Clear_Dashboard:
-        ldx #(screen_width*2)-1  // 43 ($22) Two x Screen Width - 1 because we're counting 0
+        ldx #(screen_width*2)-1         // 43 ($22) Two x Screen Width - 1 because we're counting 0
 !loop:  lda #Color_White
         sta Color_Line_22,X
         lda #$00
@@ -2757,8 +2731,8 @@ Clear_Dashboard:
         bpl !loop-
 
 // Copy text into bottom two lines of screen
-        ldx #$2B                // Two x Screen Width?
-!loop:  lda $1BD0,X
+        ldx #(screen_width*2)-1             // Two x Screen Width?
+!loop:  lda Dash_Text,X
         sta Screen_Line_22,X
         dex
         bpl !loop-
@@ -2766,29 +2740,26 @@ Clear_Dashboard:
         rts
 
 // Draw Floor Character - fill in a hole after an alien was killed ??
-// $1DB6
 Draw_Fill_Hole:
         lda #Char_Floor
-        sta $2B
+        sta Char_To_Draw
         lda #Color_Green
         sta Color_To_Draw
         jsr Draw_Char_On_Screen         // Draw Floor
         rts
 
-// $1DC2
 Alien_Fall:
         inc Char_Y                      // +1 Y ??
         lda #Char_Alien_0               // Alien animation frame 0
         sta Char_To_Draw                // Store in Char to draw
-        lda $42                         // Get Alien Color
+        lda Killed_Alien_Level          // Get Alien Color
         sta Color_To_Draw               // Store in Char color to draw
         jsr Draw_Char_On_Screen         // Draw alien
-        jmp $1D95                       // Return after delay
+        jmp Delay_Then_Return           // Return after delay
 
 //
 // Have the aliens found the player - Carry is clear if no collision and set if collision
 //
-// $1DD2
 Chk_Alien_Impact:
                 ldx #$01                // X indexes though alien database
 !loop:          lda Alien_Data,X        // Get the Alien X and compare it with the Current character X??
@@ -2803,7 +2774,6 @@ Chck_Nxt_Alien:inx
                 clc                     // No collision so return clear
                 rts
 
-// $1DE7:  
 Match_X:        inx                     // Move to Y co-ordinate entry and compare with Alien Y with Player Y
                 lda Alien_Data,X
                 cmp Char_Y
@@ -2811,17 +2781,16 @@ Match_X:        inx                     // Move to Y co-ordinate entry and compa
                 sec                     // Collision so return carry set
                 rts
 
-// $1DF1
-Volume_Silence:
+Volume_Silence:                         // This doesn't ever seem to be called, should be able to remove it to save memory???
         lda #$00                        // Set volume to 0
         sta VIC_OSC_1_FREQ
         rts
 
-// $1DF7
-        .byte $01,$04,$07,$0A,$0D,$10,$13,$A5,$30,$29,$01
+// Not sure what this hex is for???
+//        .byte $01,$04,$07,$0A,$0D,$10,$13,$A5,$30,$29,$01
 
 //
-// MUST END BEFORE $1E00 which is the start of the screen RAM
+// MUST END BEFORE $1DFF which is the start of the screen RAM
 //
 
 //          .END
